@@ -292,77 +292,86 @@ describe("ProductMarket Full Flow", function () {
       ).to.be.revertedWith("Already voted");
     });
 
+    it("first 3 votes close dispute and refund remaining staked reviewers", async function () {
+      const [assignedReviewers] = await disputeManager.getDisputeInfo(1);
+      // 前3个先质押并投票
+      for (let i = 0; i < 3; i++) {
+        const r = await ethers.getSigner(assignedReviewers[i]);
+        await disputeManager.connect(r).stakeToEnter(1, { value: ethers.parseEther("0.1") });
+      }
+      await disputeManager.connect(await ethers.getSigner(assignedReviewers[0])).castVote(1, 1);
+      await disputeManager.connect(await ethers.getSigner(assignedReviewers[1])).castVote(1, 1);
+      await disputeManager.connect(await ethers.getSigner(assignedReviewers[2])).castVote(1, 2);
+
+      // 争议应立即 resolved
+      const disputeAfter = await disputeManager.getDisputeInfo(1);
+      expect(disputeAfter[4]).to.equal(true); // resolved
+      expect(disputeAfter[5]).to.equal(true); // buyerWon
+
+      // 4、5 已质押但未投票时，已自动退回质押（状态 from getReviewerStakeStatus）
+      for (let i = 3; i < 5; i++) {
+        const rAddr = assignedReviewers[i];
+        const [hasStaked, hasVoted] = await disputeManager.getReviewerStakeStatus(1, rAddr);
+        expect(hasStaked).to.equal(false);
+        expect(hasVoted).to.equal(false);
+      }
+
+      // 后续任何人投票都会被拒绝
+      await expect(disputeManager.connect(await ethers.getSigner(assignedReviewers[3])).castVote(1, 1))
+        .to.be.revertedWith("Already resolved");
+    });
+
     it("buyer wins: product price returned to buyer", async function () {
       const [assignedReviewers] = await disputeManager.getDisputeInfo(1);
+      // 只需要3个评审投票，3票后争议已自动结束
       for (let i = 0; i < 3; i++) {
         const r = await ethers.getSigner(assignedReviewers[i]);
         await disputeManager.connect(r).stakeToEnter(1, { value: ethers.parseEther("0.1") });
         await disputeManager.connect(r).castVote(1, 1); // BuyerWins
       }
-      for (let i = 3; i < 5; i++) {
-        const r = await ethers.getSigner(assignedReviewers[i]);
-        await disputeManager.connect(r).stakeToEnter(1, { value: ethers.parseEther("0.1") });
-        await disputeManager.connect(r).castVote(1, 2); // SellerWins
-      }
 
-      await time.increase(24 * 60 * 60 + 1);
+      // dispute 3 votes后结束
+      const [_, buyerVotes, sellerVotes, , resolved, buyerWon] = await disputeManager.getDisputeInfo(1);
+      expect(buyerVotes + sellerVotes).to.equal(3);
+      expect(resolved).to.equal(true);
+      expect(buyerWon).to.equal(true);
 
-      const buyerBefore = await ethers.provider.getBalance(buyer.address);
-      await disputeManager.connect(buyer).settleDispute(1);
-      const buyerAfter = await ethers.provider.getBalance(buyer.address);
+      // 结算请求将被拒绝：已结束
+      await expect(disputeManager.connect(buyer).settleDispute(1)).to.be.revertedWith("Already resolved");
 
-      // buyer 收到商品款退回 0.1 ETH + 质押退回 0.5 ETH ≈ 0.6 ETH
-      expect(buyerAfter - buyerBefore).to.be.closeTo(
-        ethers.parseEther("0.6"),
-        ethers.parseEther("0.01")
-      );
+      // on-chain商品状态应被标记为Resolved
+      const p = await market.getProduct(1);
+      expect(p.status).to.equal(5); // Resolved
     });
 
     it("seller wins: product price sent to seller", async function () {
       const [assignedReviewers] = await disputeManager.getDisputeInfo(1);
-      for (let i = 0; i < 4; i++) {
+      // 只需要3个评审投票即可，争议随第三票自动完成
+      for (let i = 0; i < 3; i++) {
         const r = await ethers.getSigner(assignedReviewers[i]);
         await disputeManager.connect(r).stakeToEnter(1, { value: ethers.parseEther("0.1") });
         await disputeManager.connect(r).castVote(1, 2); // SellerWins
       }
-      // 第5个只质押不投票：质押退回，不进奖金池
-      const r4 = await ethers.getSigner(assignedReviewers[4]);
-      await disputeManager.connect(r4).stakeToEnter(1, { value: ethers.parseEther("0.1") });
 
-      await time.increase(24 * 60 * 60 + 1);
+      const [_, buyerVotes, sellerVotes, , resolved, buyerWon] = await disputeManager.getDisputeInfo(1);
+      expect(buyerVotes + sellerVotes).to.equal(3);
+      expect(resolved).to.equal(true);
+      expect(buyerWon).to.equal(false);
 
-      const sellerBefore = await ethers.provider.getBalance(seller.address);
-      const r4Before = await ethers.provider.getBalance(assignedReviewers[4]);
+      await expect(disputeManager.connect(seller).settleDispute(1)).to.be.revertedWith("Already resolved");
 
-      await disputeManager.connect(seller).settleDispute(1);
-      const sellerAfter = await ethers.provider.getBalance(seller.address);
-      const r4After = await ethers.provider.getBalance(assignedReviewers[4]);
-
-      // seller 收到商品款 0.1 ETH + 质押退回 0.5 ETH ≈ 0.6 ETH
-      expect(sellerAfter - sellerBefore).to.be.closeTo(
-        ethers.parseEther("0.6"),
-        ethers.parseEther("0.01")
-      );
-
-      // 只质押不投票的评审员：质押退回（无惩罚）
-      expect(r4After - r4Before).to.be.closeTo(
-        ethers.parseEther("0.1"),
-        ethers.parseEther("0.001")
-      );
+      const p = await market.getProduct(1);
+      expect(p.status).to.equal(5); // Resolved
     });
 
-    it("tie triggers re-assignment and resets votes", async function () {
+    it("tie via timeout triggers re-assignment and resets votes", async function () {
       const [assignedReviewers] = await disputeManager.getDisputeInfo(1);
 
+      // 只有 2 票，不触发3票结案
       for (let i = 0; i < 2; i++) {
         const r = await ethers.getSigner(assignedReviewers[i]);
         await disputeManager.connect(r).stakeToEnter(1, { value: ethers.parseEther("0.1") });
-        await disputeManager.connect(r).castVote(1, 1); // BuyerWins
-      }
-      for (let i = 2; i < 4; i++) {
-        const r = await ethers.getSigner(assignedReviewers[i]);
-        await disputeManager.connect(r).stakeToEnter(1, { value: ethers.parseEther("0.1") });
-        await disputeManager.connect(r).castVote(1, 2); // SellerWins
+        await disputeManager.connect(r).castVote(1, i === 0 ? 1 : 2);
       }
 
       await time.increase(24 * 60 * 60 + 1);

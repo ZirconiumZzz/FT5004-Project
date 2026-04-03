@@ -76,7 +76,7 @@ contract DataFetcher {
     {
         return ReviewerDashboard({
             disputes: dispute.getReviewerDisputeDetails(reviewer),
-            totalEarnings: dispute.reviewerEarnings(reviewer)
+            totalEarnings: market.reviewerEarnings(reviewer)
         });
     }
 
