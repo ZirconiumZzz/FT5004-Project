@@ -1149,3 +1149,198 @@ img { display: block; max-width: 100%; }
   font-family: var(--font-mono);
   color: var(--text-strong);
 }
+
+/* ─── Product Meta Grid (component specs) ───────────────────────────────────── */
+.product-meta-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.product-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.product-meta-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+}
+
+.product-meta-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+}
+
+/* ─── Seller form: optional fields ─────────────────────────────────────────── */
+.form-optional-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 16px 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.form-optional-tag {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--blue-400);
+  background: rgba(59,130,246,0.07);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 600px) {
+  .form-grid { grid-template-columns: 1fr; }
+}
+
+.field-required {
+  color: var(--danger);
+  margin-left: 2px;
+}
+
+/* ─── Arbitrator terms modal ────────────────────────────────────────────────── */
+.modal-box-lg {
+  max-width: 540px;
+}
+
+.terms-intro {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  background: var(--gray-50);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.terms-icon {
+  color: var(--warning);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.terms-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.terms-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.terms-num {
+  width: 22px;
+  height: 22px;
+  background: var(--navy-900);
+  color: white;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.terms-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: rgba(59,130,246,0.05);
+  border: 1px solid rgba(59,130,246,0.2);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+  cursor: pointer;
+}
+
+.terms-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--navy-900);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* ─── Arbitrator status badge ───────────────────────────────────────────────── */
+.arbitrator-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--success);
+  background: var(--success-bg);
+  border: 1px solid rgba(16,185,129,0.2);
+  padding: 7px 14px;
+  border-radius: var(--radius-md);
+}
+
+/* ─── Arbitrator info banner ────────────────────────────────────────────────── */
+.arbitrator-info-banner {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  background: rgba(59,130,246,0.05);
+  border: 1px solid rgba(59,130,246,0.15);
+  border-radius: var(--radius-lg);
+  padding: 16px 20px;
+  margin-bottom: 28px;
+  color: var(--text);
+}
+
+.arbitrator-info-banner strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-strong);
+  margin-bottom: 4px;
+}
+
+.arbitrator-info-banner p {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.arbitrator-info-banner > svg {
+  color: var(--blue-400);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
