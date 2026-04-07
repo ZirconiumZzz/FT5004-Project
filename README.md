@@ -46,19 +46,19 @@ The system comprises four Solidity contracts with clearly separated responsibili
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        React Frontend                        │
-│              (ethers.js v6 + MetaMask / EIP-1193)            │
-└───────────┬──────────────┬──────────────┬───────────────────┘
-            │              │              │
-            ▼              ▼              ▼
-   ┌──────────────┐  ┌──────────┐  ┌──────────────────┐
-   │ ProductMarket│  │DataFetch-│  │ ReviewerRegistry  │
-   │  (ETH vault) │  │   er     │  │  (juror pool)     │
-   └──────┬───────┘  └──────────┘  └────────┬─────────┘
-          │  raiseDispute / resolveByDispute  │ selectReviewers
-          ▼                                  │
-   ┌──────────────────────────────────────┐  │
-   │           DisputeManager             │◄─┘
+│                        React Frontend                       │
+│              (ethers.js v6 + MetaMask / EIP-1193)           │
+└───────────┬──────────────┬───────────────────────────────┬──┘
+            │              │                               │
+            ▼              ▼                               ▼
+   ┌──────────────┐  ┌───────────┐                ┌──────────────────┐
+   │ ProductMarket│  │DataFetcher│                │ ReviewerRegistry │
+   │  (ETH vault) │  │           │                │  (juror pool)    │
+   └──────┬───────┘  └───────────┘                └────────┬─────────┘
+          │  raiseDispute / resolveByDispute               │ selectReviewers
+          ▼                                                │
+   ┌──────────────────────────────────────┐                │
+   │           DisputeManager             │◄───────────────┘
    │  (voting logic, stake accounting)    │
    └──────────────────────────────────────┘
 ```
@@ -97,7 +97,7 @@ Maintains the pool of qualified arbitrators. Production registration requires �
 Key functions: `registerAsReviewer`, `forceRegister`, `selectReviewers`, `recordSale`
 
 ### DataFetcher.sol
-Read-only aggregation contract designed to reduce frontend RPC round-trips by batching multi-contract data into a single view call per dashboard. The current frontend implementation achieves equivalent functionality via concurrent `Promise.all` calls and may be migrated to use DataFetcher in a production deployment.
+Read-only aggregation contract designed to reduce frontend RPC round-trips by batching multi-contract data into a single view call per dashboard. The current frontend achieves equivalent functionality via concurrent `Promise.all` calls; DataFetcher is available as a drop-in optimization for production deployment where RPC call volume becomes a bottleneck.
 
 Key functions: `getStorefront`, `getBuyerDashboard`, `getSellerDashboard`, `getReviewerDashboard`
 
@@ -149,20 +149,25 @@ Key functions: `getStorefront`, `getBuyerDashboard`, `getSellerDashboard`, `getR
 
 ```bash
 git clone <your-repo-url>
-cd detrust-market
+cd FT5004-PROJECT
 ```
 
-### 2. Install dependencies
+### 2. Install root dependencies (Hardhat)
 
 ```bash
-# Install frontend dependencies
 npm install
-
-# Install Hardhat and contract dependencies (from the project root or contracts folder)
-npm install --save-dev hardhat @nomicfoundation/hardhat-toolbox
 ```
 
-### 3. Start a local Hardhat node
+### 3. Install frontend dependencies
+
+```bash
+cd frontend
+npm install
+```
+
+### 4. Start a local Hardhat node
+
+From the project root:
 
 ```bash
 npx hardhat node
@@ -170,25 +175,25 @@ npx hardhat node
 
 This starts a local Ethereum network at `http://127.0.0.1:8545` and prints 20 funded test accounts. Keep this terminal running.
 
-### 4. Deploy the contracts
+### 5. Deploy the contracts
 
-In a new terminal, run the deployment script:
+In a new terminal, from the project root:
 
 ```bash
 npx hardhat run scripts/deploy.js --network localhost
 ```
 
-The deployment script must deploy contracts in this order (due to constructor dependencies):
+The deployment script deploys contracts in the required order (due to constructor dependencies):
 
 ```
 ReviewerRegistry → ProductMarket → DisputeManager → DataFetcher
 ```
 
-Then call:
+And then calls:
 - `ProductMarket.setDisputeManager(disputeManagerAddress)`
 - `ReviewerRegistry.setMarketContract(productMarketAddress)`
 
-Confirm the deployed addresses match those in `src/App.tsx`:
+Confirm the deployed addresses match those in `frontend/src/App.tsx`:
 
 ```typescript
 const ADDRESSES = {
@@ -198,9 +203,9 @@ const ADDRESSES = {
 };
 ```
 
-> If your addresses differ, update `ADDRESSES` in `src/App.tsx` before starting the frontend.
+> These addresses are deterministic on a fresh Hardhat node. If you restart the node, redeploy and the addresses will match automatically.
 
-### 5. Configure MetaMask
+### 6. Configure MetaMask
 
 Add the local Hardhat network to MetaMask:
 
@@ -211,11 +216,12 @@ Add the local Hardhat network to MetaMask:
 | Chain ID | 31337 |
 | Currency Symbol | ETH |
 
-Import at least 3 test accounts using the private keys printed by `npx hardhat node`. You will need separate accounts to act as buyer, seller, and arbitrator.
+Import test accounts using the private keys printed by `npx hardhat node`. You will need at least 7 accounts to run the full dispute flow: 1 seller, 1 buyer, and 5 arbitrators.
 
-### 6. Start the frontend
+### 7. Start the frontend
 
 ```bash
+cd frontend
 npm run dev
 ```
 
@@ -225,7 +231,7 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 ## Usage Guide
 
-### Full demo flow (3 accounts required)
+### Full demo flow
 
 **Account A — Seller**
 1. Connect wallet → click the wallet badge → Top Up Security Deposit (1 ETH)
@@ -235,11 +241,11 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 **Account B — Buyer**
 1. Connect wallet → Top Up Security Deposit (1 ETH) → Top Up In-App Wallet (enough to cover the item price)
 2. Go to Marketplace → Purchase the listed component
-3. After shipment: either click Confirm Receipt (releases payment) or Raise Dispute
+3. After shipment: either click Confirm Receipt (releases payment to seller) or Raise Dispute
 
-**Account C — Arbitrator (dispute flow only)**
-1. Connect wallet → Go to Arbitration
-2. Click Apply as Arbitrator → accept the Code of Conduct → Confirm & Register
+**Accounts C–G — Arbitrators (5 accounts, dispute flow only)**
+1. Connect wallet → Top Up In-App Wallet (at least 0.1 ETH for juror stake)
+2. Go to Arbitration → Apply as Arbitrator → accept the Code of Conduct → Confirm & Register
 3. Once a dispute is open and you are assigned: Stake 0.1 ETH to Join → vote Side with Buyer or Side with Seller
 4. After 3 votes are cast, the case resolves automatically
 
@@ -250,7 +256,7 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 | Buyer wins | price refund + 0.5 ETH deposit returned | 0.5 ETH deposit forfeited |
 | Seller wins | 0.5 ETH deposit forfeited | price paid out + 0.5 ETH deposit returned |
 
-Majority jurors recover their 0.1 ETH stake plus a share of the prize pool. Minority jurors forfeit their stake into the prize pool.
+Majority jurors recover their 0.1 ETH stake plus a share of the prize pool. Minority jurors forfeit their stake into the prize pool. A platform fee of 0.1 ETH is deducted from the prize pool before distribution.
 
 ---
 
@@ -270,25 +276,31 @@ Majority jurors recover their 0.1 ETH stake plus a share of the prize pool. Mino
 ## Project Structure
 
 ```
-detrust-market/
+FT5004-PROJECT/
 ├── contracts/
-│   ├── ProductMarket.sol       # Core marketplace and ETH vault
-│   ├── DisputeManager.sol      # Arbitration logic and stake accounting
-│   ├── ReviewerRegistry.sol    # Arbitrator pool and eligibility
-│   └── DataFetcher.sol         # Read-only data aggregation helper
-├── src/
-│   ├── App.tsx                 # Main React application (all UI components)
-│   ├── index.css               # Global styles and design tokens
-│   ├── main.tsx                # React entry point
-│   └── abis/                   # Contract ABI JSON files
-│       ├── ProductMarket.json
-│       ├── DisputeManager.json
-│       ├── ReviewerRegistry.json
-│       └── DataFetcher.json
+│   ├── ProductMarket.sol        # Core marketplace and ETH vault
+│   ├── DisputeManager.sol       # Arbitration logic and stake accounting
+│   ├── ReviewerRegistry.sol     # Arbitrator pool and eligibility
+│   └── DataFetcher.sol          # Read-only data aggregation helper
+├── frontend/
+│   ├── src/
+│   │   ├── abis/                # Contract ABI JSON files (generated by Hardhat)
+│   │   │   ├── ProductMarket.json
+│   │   │   ├── DisputeManager.json
+│   │   │   ├── ReviewerRegistry.json
+│   │   │   └── DataFetcher.json
+│   │   ├── App.tsx              # Main React application (all UI and contract logic)
+│   │   ├── index.css            # Global styles and design tokens
+│   │   └── main.tsx             # React entry point
+│   ├── public/
+│   ├── package.json
+│   ├── vite.config.ts
+│   └── tsconfig.json
 ├── scripts/
-│   └── deploy.js               # Hardhat deployment script
+│   ├── deploy.js                # Hardhat deployment script
+│   └── manualTest.js            # Manual interaction helpers
 ├── test/
-│   └── DeTrust.test.js         # Contract test suite
+│   └── ProductMarket_test.js    # Automated contract test suite
 ├── hardhat.config.js
 ├── package.json
 └── README.md
