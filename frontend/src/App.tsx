@@ -2,33 +2,33 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import { ethers } from 'ethers';
 import {
-  ShoppingBag, Wallet, ShieldCheck, Truck, Package, Scale, User,
-  PlusCircle, History, AlertCircle, CheckCircle2, Send, ChevronRight,
-  ArrowRight, Lock, Gavel, TrendingUp, Clock, Star, ChevronDown, Cpu
+  ShoppingBag, Wallet, ShieldCheck, Package, Scale,
+  PlusCircle, AlertCircle, CheckCircle2, Send,
+  ArrowRight, Lock, Gavel, Cpu
 } from 'lucide-react';
 
-import ProductMarketABI from './abis/ProductMarket.json';
-import DataFetcherABI from './abis/DataFetcher.json';
+import ProductMarketABI   from './abis/ProductMarket.json';
 import ReviewerRegistryABI from './abis/ReviewerRegistry.json';
-import DisputeManagerABI from './abis/DisputeManager.json';
+import DisputeManagerABI  from './abis/DisputeManager.json';
 
+// ── Contract addresses (Hardhat localhost defaults) ───────────────────────────
 const ADDRESSES = {
-  MARKET: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-  FETCHER: "0x0165878A594ca255338adfa4d48449f69242Eb8F",
+  MARKET:   "0x5FbDB2315678afecb367f032d93F642f64180aa3",
   REGISTRY: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
-  DISPUTE: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
+  DISPUTE:  "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
 };
 
-const STATUS_MAP: any = {
-  0: { label: "Listed", color: "status-active" },
+// Maps ProductStatus enum (from ProductMarket.sol) to display strings
+const STATUS_MAP: Record<number, { label: string; color: string }> = {
+  0: { label: "Listed",           color: "status-active"  },
   1: { label: "Pending Shipment", color: "status-pending" },
-  2: { label: "Shipped", color: "status-shipped" },
-  3: { label: "Completed", color: "status-success" },
-  4: { label: "In Dispute", color: "status-dispute" },
-  5: { label: "Closed", color: "status-closed" }
+  2: { label: "Shipped",          color: "status-shipped" },
+  3: { label: "Completed",        color: "status-success" },
+  4: { label: "In Dispute",       color: "status-dispute" },
+  5: { label: "Closed",           color: "status-closed"  },
 };
 
-// ─── Product data helpers ──────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 interface ComponentMeta {
   name: string;
   partNumber?: string;
@@ -38,6 +38,22 @@ interface ComponentMeta {
   origin?: string;
 }
 
+interface Product {
+  id: string;
+  seller: string;
+  buyer: string;
+  ipfsHash: string;
+  meta: ComponentMeta;
+  price: bigint;
+  status: number;
+  disputeResolved?: boolean;
+  buyerWon?: boolean;
+  iWon?: boolean;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// Parse the ipfsHash field, which stores component metadata as JSON
 const parseProductMeta = (raw: string): ComponentMeta => {
   try {
     const obj = JSON.parse(raw);
@@ -46,41 +62,38 @@ const parseProductMeta = (raw: string): ComponentMeta => {
   return { name: raw || "Unknown Component" };
 };
 
-const formatProductTitle = (meta: ComponentMeta): string => {
-  const parts = [meta.name];
-  if (meta.partNumber) parts.push(`[${meta.partNumber}]`);
-  return parts.join(' ');
-};
+const formatProductTitle = (meta: ComponentMeta): string =>
+  meta.partNumber ? `${meta.name} [${meta.partNumber}]` : meta.name;
 
-const safeParseProduct = (p: any) => {
+// Safely parse a raw contract product tuple into a typed Product object
+const safeParseProduct = (p: any): Product | null => {
   if (!p) return null;
   try {
-    const id = (p.id || p[0])?.toString();
+    const id = (p.id ?? p[0])?.toString();
     if (!id) return null;
-    const rawHash = (p.ipfsHash || p[3]) || "Unknown Component";
-    const meta = parseProductMeta(rawHash);
+    const rawHash = (p.ipfsHash ?? p[3]) || "Unknown Component";
     return {
       id,
-      seller: (p.seller || p[1]) || "",
-      buyer: (p.buyer || p[2]) || "",
+      seller:   (p.seller ?? p[1]) || "",
+      buyer:    (p.buyer  ?? p[2]) || "",
       ipfsHash: rawHash,
-      meta,
-      price: p.price ? BigInt(p.price.toString()) : (p[5] ? BigInt(p[5].toString()) : 0n),
-      status: Number(p.status ?? p[7] ?? 0)
+      meta:     parseProductMeta(rawHash),
+      price:    BigInt((p.price ?? p[5] ?? 0).toString()),
+      status:   Number(p.status ?? p[7] ?? 0),
     };
-  } catch (e) {
+  } catch {
     return null;
   }
 };
 
-// ─── Product Meta Display ──────────────────────────────────────────────────────
+// ── ProductMetaGrid ───────────────────────────────────────────────────────────
 const ProductMetaGrid = ({ meta }: { meta: ComponentMeta }) => {
   const fields = [
-    { label: "Part Number", value: meta.partNumber },
-    { label: "Brand / MFR", value: meta.brand },
-    { label: "Condition", value: meta.condition },
-    { label: "Quantity", value: meta.quantity },
-    { label: "Origin / Lot", value: meta.origin },
+    { label: "Part Number",   value: meta.partNumber },
+    { label: "Brand / MFR",  value: meta.brand      },
+    { label: "Condition",    value: meta.condition   },
+    { label: "Quantity",     value: meta.quantity    },
+    { label: "Origin / Lot", value: meta.origin      },
   ].filter(f => f.value);
 
   if (fields.length === 0) return null;
@@ -96,102 +109,86 @@ const ProductMetaGrid = ({ meta }: { meta: ComponentMeta }) => {
   );
 };
 
-// ─── Wallet Modal ──────────────────────────────────────────────────────────────
+// ── WalletModal ───────────────────────────────────────────────────────────────
 const WalletModal = ({ wallet, deposit, onWalletDeposit, onWalletWithdraw, onDepositSeller, onClose }: any) => {
   const [amount, setAmount] = useState("");
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-box" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h3>Account Overview</h3>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={onClose}>&#x2715;</button>
         </div>
 
         <div className="modal-balances">
           <div className="modal-balance-item">
             <span className="modal-balance-label">In-App Wallet</span>
             <span className="modal-balance-value">{wallet} ETH</span>
-            <span className="modal-balance-desc">Used for purchases & juror staking</span>
+            <span className="modal-balance-desc">Used for purchases &amp; juror staking</span>
           </div>
           <div className="modal-balance-item">
             <span className="modal-balance-label">Security Deposit</span>
             <span className="modal-balance-value">{deposit} ETH</span>
-            <span className="modal-balance-desc">Requires ≥ 1 ETH to trade; 0.5 ETH held during disputes</span>
+            <span className="modal-balance-desc">Requires &ge; 1 ETH to trade; 0.5 ETH held during disputes</span>
           </div>
         </div>
 
         <div className="modal-section">
           <label className="modal-label">Amount (ETH)</label>
           <input
-            className="form-input"
-            type="number"
-            placeholder="0.5"
-            value={amount}
-            onChange={e => setAmount(e.target.value)}
+            className="form-input" type="number" placeholder="0.5"
+            value={amount} onChange={e => setAmount(e.target.value)}
           />
         </div>
 
         <div className="modal-actions">
-          <button className="btn-primary" onClick={() => { onWalletDeposit(amount); onClose(); }}>
-            Top Up In-App Wallet
-          </button>
-          <button className="btn-outline" onClick={() => { onWalletWithdraw(amount); onClose(); }}>
-            Withdraw from Wallet
-          </button>
-          <button className="btn-ghost" onClick={() => { onDepositSeller(); onClose(); }}>
-            Top Up Security Deposit (1 ETH)
-          </button>
+          <button className="btn-primary"  onClick={() => { onWalletDeposit(amount); onClose(); }}>Top Up In-App Wallet</button>
+          <button className="btn-outline"  onClick={() => { onWalletWithdraw(amount); onClose(); }}>Withdraw from Wallet</button>
+          <button className="btn-ghost"    onClick={() => { onDepositSeller(); onClose(); }}>Top Up Security Deposit (1 ETH)</button>
         </div>
       </div>
     </div>
   );
 };
 
-// ─── Arbitrator Terms Modal ────────────────────────────────────────────────────
+// ── ArbitratorTermsModal ──────────────────────────────────────────────────────
+const ARBITRATOR_TERMS = [
+  "I confirm that I have professional experience in semiconductor components, electronic parts procurement, or a closely related industry.",
+  "I will evaluate each dispute impartially, based solely on the evidence provided — including product specifications, part numbers, condition descriptions, and shipment documentation.",
+  "I will not accept any form of bribe, side payment, or inducement from either the buyer or seller involved in a dispute.",
+  "I understand that incorrect or dishonest votes may result in forfeiture of my 0.1 ETH stake, as determined by the outcome of the majority vote.",
+  "I acknowledge that I was selected randomly from the eligible arbitrator pool and that my identity is not disclosed to the disputing parties during the voting period.",
+];
+
 const ArbitratorTermsModal = ({ onConfirm, onClose }: { onConfirm: () => void; onClose: () => void }) => {
   const [agreed, setAgreed] = useState(false);
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box modal-box-lg" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-box modal-box-lg" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h3>Arbitrator Code of Conduct</h3>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={onClose}>&#x2715;</button>
         </div>
 
         <div className="terms-intro">
           <div className="terms-icon"><Gavel size={20} /></div>
-          <p>By registering as an arbitrator on DeTrust Market, you agree to uphold the standards of the semiconductor component trading community. Please read and acknowledge the following terms.</p>
+          <p>
+            By registering as an arbitrator on DeTrust Market, you agree to uphold the standards
+            of the semiconductor component trading community. Please read and acknowledge the following terms.
+          </p>
         </div>
 
         <div className="terms-list">
-          <div className="terms-item">
-            <span className="terms-num">1</span>
-            <span>I confirm that I have professional experience in semiconductor components, electronic parts procurement, or a closely related industry.</span>
-          </div>
-          <div className="terms-item">
-            <span className="terms-num">2</span>
-            <span>I will evaluate each dispute impartially, based solely on the evidence provided — including product specifications, part numbers, condition descriptions, and shipment documentation.</span>
-          </div>
-          <div className="terms-item">
-            <span className="terms-num">3</span>
-            <span>I will not accept any form of bribe, side payment, or inducement from either the buyer or seller involved in a dispute.</span>
-          </div>
-          <div className="terms-item">
-            <span className="terms-num">4</span>
-            <span>I understand that incorrect or dishonest votes may result in forfeiture of my 0.1 ETH stake, as determined by the outcome of the majority vote.</span>
-          </div>
-          <div className="terms-item">
-            <span className="terms-num">5</span>
-            <span>I acknowledge that I was selected randomly from the eligible arbitrator pool and that my identity is not disclosed to the disputing parties during the voting period.</span>
-          </div>
+          {ARBITRATOR_TERMS.map((term, i) => (
+            <div key={i} className="terms-item">
+              <span className="terms-num">{i + 1}</span>
+              <span>{term}</span>
+            </div>
+          ))}
         </div>
 
         <label className="terms-checkbox">
-          <input
-            type="checkbox"
-            checked={agreed}
-            onChange={e => setAgreed(e.target.checked)}
-          />
+          <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} />
           <span>I have read and agree to all of the above terms</span>
         </label>
 
@@ -213,7 +210,7 @@ const ArbitratorTermsModal = ({ onConfirm, onClose }: { onConfirm: () => void; o
   );
 };
 
-// ─── Navbar ───────────────────────────────────────────────────────────────────
+// ── Navbar ────────────────────────────────────────────────────────────────────
 const Navbar = ({ account, deposit, wallet, connect, onDeposit, onWalletDeposit, onWalletWithdraw }: any) => {
   const location = useLocation();
   const [showWallet, setShowWallet] = useState(false);
@@ -223,24 +220,16 @@ const Navbar = ({ account, deposit, wallet, connect, onDeposit, onWalletDeposit,
       <nav className="navbar">
         <div className="navbar-inner">
           <Link to="/" className="navbar-brand">
-            <div className="brand-icon">
-              <ShieldCheck size={16} />
-            </div>
+            <div className="brand-icon"><ShieldCheck size={16} /></div>
             <span>DeTrust Market</span>
           </Link>
 
           <div className="navbar-links">
             {account && (
               <>
-                <Link to="/buyer/market" className={`nav-link ${location.pathname.startsWith('/buyer') ? 'active' : ''}`}>
-                  Marketplace
-                </Link>
-                <Link to="/seller/listings" className={`nav-link ${location.pathname.startsWith('/seller') ? 'active' : ''}`}>
-                  Seller Portal
-                </Link>
-                <Link to="/arbitrator/pool" className={`nav-link ${location.pathname.startsWith('/arbitrator') ? 'active' : ''}`}>
-                  Arbitration
-                </Link>
+                <Link to="/buyer/market"    className={`nav-link ${location.pathname.startsWith('/buyer')      ? 'active' : ''}`}>Marketplace</Link>
+                <Link to="/seller/listings" className={`nav-link ${location.pathname.startsWith('/seller')     ? 'active' : ''}`}>Seller Portal</Link>
+                <Link to="/arbitrator/pool" className={`nav-link ${location.pathname.startsWith('/arbitrator') ? 'active' : ''}`}>Arbitration</Link>
               </>
             )}
           </div>
@@ -268,21 +257,19 @@ const Navbar = ({ account, deposit, wallet, connect, onDeposit, onWalletDeposit,
           </div>
         </div>
       </nav>
+
       {showWallet && (
         <WalletModal
-          wallet={wallet}
-          deposit={deposit}
-          onWalletDeposit={onWalletDeposit}
-          onWalletWithdraw={onWalletWithdraw}
-          onDepositSeller={onDeposit}
-          onClose={() => setShowWallet(false)}
+          wallet={wallet} deposit={deposit}
+          onWalletDeposit={onWalletDeposit} onWalletWithdraw={onWalletWithdraw}
+          onDepositSeller={onDeposit} onClose={() => setShowWallet(false)}
         />
       )}
     </>
   );
 };
 
-// ─── Landing / Role Select ─────────────────────────────────────────────────────
+// ── RoleSelectPage (Landing + Role Select) ────────────────────────────────────
 const RoleSelectPage = ({ account, connect }: any) => {
   const navigate = useNavigate();
 
@@ -298,36 +285,31 @@ const RoleSelectPage = ({ account, connect }: any) => {
           <ShieldCheck size={12} />
           <span>Semiconductor Components · Blockchain Escrow · Expert Arbitration</span>
         </div>
-        <h1 className="landing-title">
-          De<span className="title-accent">Trust</span>
-        </h1>
+        <h1 className="landing-title">De<span className="title-accent">Trust</span></h1>
         <p className="landing-subtitle">Trusted B2B Procurement for Semiconductor Components</p>
-        <p className="landing-desc">Counterfeit parts cost the industry billions each year. DeTrust Market uses smart contract escrow and industry-expert arbitration to protect every transaction.</p>
+        <p className="landing-desc">
+          Counterfeit parts cost the industry billions each year. DeTrust Market uses smart contract
+          escrow and industry-expert arbitration to protect every transaction.
+        </p>
         <button className="btn-primary btn-lg" onClick={connect}>
-          <Wallet size={18} />
-          Connect Wallet
-          <ArrowRight size={16} />
+          <Wallet size={18} /> Connect Wallet <ArrowRight size={16} />
         </button>
-
         <div className="landing-stats">
-          <div className="stat-item">
-            <span className="stat-num">100%</span>
-            <span className="stat-label">On-Chain Escrow</span>
-          </div>
+          <div className="stat-item"><span className="stat-num">100%</span><span className="stat-label">On-Chain Escrow</span></div>
           <div className="stat-divider" />
-          <div className="stat-item">
-            <span className="stat-num">Expert</span>
-            <span className="stat-label">Industry Arbitrators</span>
-          </div>
+          <div className="stat-item"><span className="stat-num">Expert</span><span className="stat-label">Industry Arbitrators</span></div>
           <div className="stat-divider" />
-          <div className="stat-item">
-            <span className="stat-num">Trustless</span>
-            <span className="stat-label">No Intermediaries</span>
-          </div>
+          <div className="stat-item"><span className="stat-num">Trustless</span><span className="stat-label">No Intermediaries</span></div>
         </div>
       </div>
     </div>
   );
+
+  const roles = [
+    { path: '/buyer/market',    icon: <ShoppingBag size={28} />, cls: 'role-icon-blue', name: 'Buyer',      desc: 'Browse verified component listings, purchase with escrow protection, confirm delivery or raise a dispute' },
+    { path: '/seller/listings', icon: <Cpu size={28} />,         cls: 'role-icon-teal', name: 'Seller',     desc: 'List semiconductor components with full technical specifications, manage orders and shipments' },
+    { path: '/arbitrator/pool', icon: <Scale size={28} />,       cls: 'role-icon-gold', name: 'Arbitrator', desc: 'Apply your industry expertise to resolve component disputes, stake ETH and earn rewards' },
+  ];
 
   return (
     <div className="page-container">
@@ -337,36 +319,20 @@ const RoleSelectPage = ({ account, connect }: any) => {
         <p className="page-desc">{account.slice(0, 8)}···{account.slice(-6)}</p>
       </div>
       <div className="role-grid">
-        <button className="role-card" onClick={() => navigate('/buyer/market')}>
-          <div className="role-icon role-icon-blue">
-            <ShoppingBag size={28} />
-          </div>
-          <h3 className="role-name">Buyer</h3>
-          <p className="role-desc">Browse verified component listings, purchase with escrow protection, confirm delivery or raise a dispute</p>
-          <div className="role-arrow"><ArrowRight size={16} /></div>
-        </button>
-        <button className="role-card" onClick={() => navigate('/seller/listings')}>
-          <div className="role-icon role-icon-teal">
-            <Cpu size={28} />
-          </div>
-          <h3 className="role-name">Seller</h3>
-          <p className="role-desc">List semiconductor components with full technical specifications, manage orders and shipments</p>
-          <div className="role-arrow"><ArrowRight size={16} /></div>
-        </button>
-        <button className="role-card" onClick={() => navigate('/arbitrator/pool')}>
-          <div className="role-icon role-icon-gold">
-            <Scale size={28} />
-          </div>
-          <h3 className="role-name">Arbitrator</h3>
-          <p className="role-desc">Apply your industry expertise to resolve component disputes, stake ETH and earn rewards</p>
-          <div className="role-arrow"><ArrowRight size={16} /></div>
-        </button>
+        {roles.map(r => (
+          <button key={r.path} className="role-card" onClick={() => navigate(r.path)}>
+            <div className={`role-icon ${r.cls}`}>{r.icon}</div>
+            <h3 className="role-name">{r.name}</h3>
+            <p className="role-desc">{r.desc}</p>
+            <div className="role-arrow"><ArrowRight size={16} /></div>
+          </button>
+        ))}
       </div>
     </div>
   );
 };
 
-// ─── Buyer Market ──────────────────────────────────────────────────────────────
+// ── BuyerMarket ───────────────────────────────────────────────────────────────
 const BuyerMarket = ({ products, onBuy }: any) => {
   const forSale = products.filter((p: any) => p.status === 0);
   return (
@@ -376,22 +342,17 @@ const BuyerMarket = ({ products, onBuy }: any) => {
           <p className="page-eyebrow">Marketplace</p>
           <h2 className="page-title">Component Listings</h2>
         </div>
-        <Link to="/buyer/orders" className="btn-ghost">
-          My Orders <ArrowRight size={14} />
-        </Link>
+        <Link to="/buyer/orders" className="btn-ghost">My Orders <ArrowRight size={14} /></Link>
       </div>
 
       {forSale.length === 0 ? (
-        <div className="empty-state">
-          <Cpu size={40} />
-          <p>No components listed yet</p>
-        </div>
+        <div className="empty-state"><Cpu size={40} /><p>No components listed yet</p></div>
       ) : (
         <div className="product-grid">
           {forSale.map((p: any) => (
             <div key={p.id} className="product-card">
               <div className="product-thumb">
-                <span>🔌</span>
+                <span>&#128268;</span>
                 <span className="product-id">#{p.id}</span>
               </div>
               <div className="product-info">
@@ -401,9 +362,7 @@ const BuyerMarket = ({ products, onBuy }: any) => {
               </div>
               <div className="product-footer">
                 <span className="product-price">{ethers.formatEther(p.price)} ETH</span>
-                <button className="btn-primary btn-sm" onClick={() => onBuy(p.id, p.price)}>
-                  Purchase
-                </button>
+                <button className="btn-primary btn-sm" onClick={() => onBuy(p.id, p.price)}>Purchase</button>
               </div>
             </div>
           ))}
@@ -413,49 +372,53 @@ const BuyerMarket = ({ products, onBuy }: any) => {
   );
 };
 
-// ─── Dispute Modal ────────────────────────────────────────────────────────────
+// ── DisputeModal ──────────────────────────────────────────────────────────────
 const DisputeModal = ({ order, onSubmit, onClose }: any) => {
   const [reason, setReason] = useState("");
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-box" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h3>Raise a Dispute</h3>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={onClose}>&#x2715;</button>
         </div>
+
         <div className="dispute-modal-product">
-          <div className="dispute-modal-row">
-            <span className="modal-balance-label">Component</span>
-            <span className="dispute-modal-value">#{order.id} · {formatProductTitle(order.meta)}</span>
-          </div>
-          <div className="dispute-modal-row">
-            <span className="modal-balance-label">Value</span>
-            <span className="dispute-modal-value">{ethers.formatEther(order.price)} ETH</span>
-          </div>
+          {[
+            { label: "Component", value: `#${order.id} · ${formatProductTitle(order.meta)}` },
+            { label: "Value",     value: `${ethers.formatEther(order.price)} ETH` },
+          ].map(row => (
+            <div key={row.label} className="dispute-modal-row">
+              <span className="modal-balance-label">{row.label}</span>
+              <span className="dispute-modal-value">{row.value}</span>
+            </div>
+          ))}
           <div className="dispute-modal-row">
             <span className="modal-balance-label">Status</span>
             <span className={`status-badge ${STATUS_MAP[order.status]?.color}`}>{STATUS_MAP[order.status]?.label}</span>
           </div>
         </div>
+
         <div className="modal-section">
           <label className="modal-label">Reason for Dispute (visible to arbitrators)</label>
           <textarea
-            className="form-input form-textarea"
+            className="form-input form-textarea" rows={4}
             placeholder="Describe the issue — e.g. components did not match stated part number, suspected counterfeit, wrong quantity shipped, items arrived damaged..."
-            value={reason}
-            onChange={e => setReason(e.target.value)}
-            rows={4}
+            value={reason} onChange={e => setReason(e.target.value)}
           />
         </div>
+
         <div className="dispute-modal-warning">
-          ⚠️ Raising a dispute will deduct 0.5 ETH from each party's security deposit. Arbitrators with semiconductor industry expertise will be randomly selected to review the case.
+          &#9888;&#65039; Raising a dispute will deduct 0.5 ETH from each party's security deposit.
+          Arbitrators with semiconductor industry expertise will be randomly selected to review the case.
         </div>
+
         <div className="modal-actions">
-          <button className="btn-danger" style={{width:'100%', justifyContent:'center', padding:'12px'}}
+          <button className="btn-danger" style={{ width: '100%', justifyContent: 'center', padding: '12px' }}
             onClick={() => { onSubmit(order.id, reason); onClose(); }}>
             <AlertCircle size={16} /> Confirm Dispute
           </button>
-          <button className="btn-ghost" style={{width:'100%', justifyContent:'center', padding:'12px'}} onClick={onClose}>
+          <button className="btn-ghost" style={{ width: '100%', justifyContent: 'center', padding: '12px' }} onClick={onClose}>
             Cancel
           </button>
         </div>
@@ -464,7 +427,7 @@ const DisputeModal = ({ order, onSubmit, onClose }: any) => {
   );
 };
 
-// ─── Buyer Orders ──────────────────────────────────────────────────────────────
+// ── BuyerOrders ───────────────────────────────────────────────────────────────
 const BuyerOrders = ({ orders, onConfirm, onDispute }: any) => {
   const [disputeTarget, setDisputeTarget] = useState<any>(null);
   return (
@@ -475,10 +438,7 @@ const BuyerOrders = ({ orders, onConfirm, onDispute }: any) => {
       </div>
 
       {orders.length === 0 ? (
-        <div className="empty-state">
-          <ShoppingBag size={40} />
-          <p>No orders yet</p>
-        </div>
+        <div className="empty-state"><ShoppingBag size={40} /><p>No orders yet</p></div>
       ) : (
         <div className="order-list">
           {orders.map((o: any) => (
@@ -487,13 +447,11 @@ const BuyerOrders = ({ orders, onConfirm, onDispute }: any) => {
                 <div className="order-icon"><ShoppingBag size={18} /></div>
                 <div>
                   <div className="order-meta">
-                    <span className={`status-badge ${STATUS_MAP[o.status]?.color}`}>
-                      {STATUS_MAP[o.status]?.label}
-                    </span>
+                    <span className={`status-badge ${STATUS_MAP[o.status]?.color}`}>{STATUS_MAP[o.status]?.label}</span>
                     <span className="order-id">#{o.id}</span>
                     {o.disputeResolved && (
                       <span className={`status-badge ${o.iWon ? 'status-success' : 'status-dispute'}`}>
-                        {o.iWon ? '⚖️ Dispute Won' : '⚖️ Dispute Lost'}
+                        {o.iWon ? '&#9878;&#65039; Dispute Won' : '&#9878;&#65039; Dispute Lost'}
                       </span>
                     )}
                   </div>
@@ -502,8 +460,8 @@ const BuyerOrders = ({ orders, onConfirm, onDispute }: any) => {
                   {o.disputeResolved && (
                     <p className={`dispute-result-text ${o.iWon ? 'result-win' : 'result-lose'}`}>
                       {o.iWon
-                        ? `✓ Refund of ${ethers.formatEther(o.price)} ETH returned to your wallet`
-                        : `✗ Payment of ${ethers.formatEther(o.price)} ETH awarded to seller, 0.5 ETH security deposit forfeited`}
+                        ? `\u2713 Refund of ${ethers.formatEther(o.price)} ETH returned to your wallet`
+                        : `\u2717 Payment of ${ethers.formatEther(o.price)} ETH awarded to seller, 0.5 ETH security deposit forfeited`}
                     </p>
                   )}
                 </div>
@@ -524,37 +482,34 @@ const BuyerOrders = ({ orders, onConfirm, onDispute }: any) => {
           ))}
         </div>
       )}
+
       {disputeTarget && (
-        <DisputeModal
-          order={disputeTarget}
-          onSubmit={onDispute}
-          onClose={() => setDisputeTarget(null)}
-        />
+        <DisputeModal order={disputeTarget} onSubmit={onDispute} onClose={() => setDisputeTarget(null)} />
       )}
     </div>
   );
 };
 
-// ─── Seller Listings ───────────────────────────────────────────────────────────
+// ── SellerListings ────────────────────────────────────────────────────────────
 const SellerListings = ({ myProducts, onList, onShip, onDispute }: any) => {
-  const [name, setName] = useState("");
-  const [price, setPrice] = useState("");
+  const [name,       setName]       = useState("");
+  const [price,      setPrice]      = useState("");
   const [partNumber, setPartNumber] = useState("");
-  const [brand, setBrand] = useState("");
-  const [condition, setCondition] = useState("");
-  const [quantity, setQuantity] = useState("");
-  const [origin, setOrigin] = useState("");
-  const [shipHash, setShipHash] = useState<any>({});
+  const [brand,      setBrand]      = useState("");
+  const [condition,  setCondition]  = useState("");
+  const [quantity,   setQuantity]   = useState("");
+  const [origin,     setOrigin]     = useState("");
+  const [shipHash,   setShipHash]   = useState<Record<string, string>>({});
   const [disputeTarget, setDisputeTarget] = useState<any>(null);
 
   const handleList = () => {
     const meta: ComponentMeta = {
       name,
       ...(partNumber && { partNumber }),
-      ...(brand && { brand }),
-      ...(condition && { condition }),
-      ...(quantity && { quantity }),
-      ...(origin && { origin }),
+      ...(brand      && { brand      }),
+      ...(condition  && { condition  }),
+      ...(quantity   && { quantity   }),
+      ...(origin     && { origin     }),
     };
     onList(JSON.stringify(meta), price);
   };
@@ -566,6 +521,7 @@ const SellerListings = ({ myProducts, onList, onShip, onDispute }: any) => {
         <h2 className="page-title">Manage Listings</h2>
       </div>
 
+      {/* Listing form */}
       <div className="form-card">
         <div className="form-card-header">
           <PlusCircle size={18} />
@@ -573,85 +529,55 @@ const SellerListings = ({ myProducts, onList, onShip, onDispute }: any) => {
           <span className="form-badge">Security Deposit Required: 1 ETH</span>
         </div>
 
-        {/* Required fields */}
         <div className="form-row" style={{ marginBottom: '12px' }}>
           <div className="form-field">
             <label>Component Name <span className="field-required">*</span></label>
-            <input
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="e.g. NVIDIA A100 80GB PCIe GPU"
-              className="form-input"
-            />
+            <input value={name} onChange={e => setName(e.target.value)}
+              placeholder="e.g. NVIDIA A100 80GB PCIe GPU" className="form-input" />
           </div>
           <div className="form-field form-field-sm">
             <label>Price (ETH) <span className="field-required">*</span></label>
-            <input
-              type="number"
-              value={price}
-              onChange={e => setPrice(e.target.value)}
-              placeholder="10.0"
-              className="form-input"
-            />
+            <input type="number" value={price} onChange={e => setPrice(e.target.value)}
+              placeholder="10.0" className="form-input" />
           </div>
         </div>
 
-        {/* Optional technical fields */}
         <div className="form-optional-label">
           <span>Technical Specifications</span>
           <span className="form-optional-tag">Recommended — buyers can see all specifications before purchasing</span>
         </div>
+
         <div className="form-grid">
           <div className="form-field">
             <label>Part Number / MPN</label>
-            <input
-              value={partNumber}
-              onChange={e => setPartNumber(e.target.value)}
-              placeholder="e.g. 900-21001-0000-000"
-              className="form-input"
-            />
+            <input value={partNumber} onChange={e => setPartNumber(e.target.value)}
+              placeholder="e.g. 900-21001-0000-000" className="form-input" />
           </div>
           <div className="form-field">
             <label>Brand / Manufacturer</label>
-            <input
-              value={brand}
-              onChange={e => setBrand(e.target.value)}
-              placeholder="e.g. NVIDIA, Intel, Samsung"
-              className="form-input"
-            />
+            <input value={brand} onChange={e => setBrand(e.target.value)}
+              placeholder="e.g. NVIDIA, Intel, Samsung" className="form-input" />
           </div>
           <div className="form-field">
             <label>Condition</label>
-            <select
-              value={condition}
-              onChange={e => setCondition(e.target.value)}
-              className="form-input"
-            >
+            <select value={condition} onChange={e => setCondition(e.target.value)} className="form-input">
               <option value="">Select condition</option>
-              <option value="New (Sealed)">New (Sealed)</option>
-              <option value="New (Open Box)">New (Open Box)</option>
-              <option value="Like New">Like New</option>
-              <option value="Used">Used</option>
-              <option value="Refurbished">Refurbished</option>
+              <option>New (Sealed)</option>
+              <option>New (Open Box)</option>
+              <option>Like New</option>
+              <option>Used</option>
+              <option>Refurbished</option>
             </select>
           </div>
           <div className="form-field">
             <label>Quantity</label>
-            <input
-              value={quantity}
-              onChange={e => setQuantity(e.target.value)}
-              placeholder="e.g. 50 units"
-              className="form-input"
-            />
+            <input value={quantity} onChange={e => setQuantity(e.target.value)}
+              placeholder="e.g. 50 units" className="form-input" />
           </div>
           <div className="form-field">
             <label>Origin / Lot / Batch</label>
-            <input
-              value={origin}
-              onChange={e => setOrigin(e.target.value)}
-              placeholder="e.g. Taiwan, Lot #2024-Q3"
-              className="form-input"
-            />
+            <input value={origin} onChange={e => setOrigin(e.target.value)}
+              placeholder="e.g. Taiwan, Lot #2024-Q3" className="form-input" />
           </div>
         </div>
 
@@ -662,12 +588,10 @@ const SellerListings = ({ myProducts, onList, onShip, onDispute }: any) => {
         </div>
       </div>
 
+      {/* My listings */}
       <h3 className="section-title">My Listings &amp; Sales</h3>
       {myProducts.length === 0 ? (
-        <div className="empty-state">
-          <Cpu size={40} />
-          <p>No listings yet</p>
-        </div>
+        <div className="empty-state"><Cpu size={40} /><p>No listings yet</p></div>
       ) : (
         <div className="order-list">
           {myProducts.map((p: any) => (
@@ -676,13 +600,11 @@ const SellerListings = ({ myProducts, onList, onShip, onDispute }: any) => {
                 <div className="order-icon"><Package size={18} /></div>
                 <div>
                   <div className="order-meta">
-                    <span className={`status-badge ${STATUS_MAP[p.status]?.color}`}>
-                      {STATUS_MAP[p.status]?.label}
-                    </span>
+                    <span className={`status-badge ${STATUS_MAP[p.status]?.color}`}>{STATUS_MAP[p.status]?.label}</span>
                     <span className="order-id">#{p.id}</span>
                     {p.disputeResolved && (
                       <span className={`status-badge ${p.iWon ? 'status-success' : 'status-dispute'}`}>
-                        {p.iWon ? '⚖️ Dispute Won' : '⚖️ Dispute Lost'}
+                        {p.iWon ? '&#9878;&#65039; Dispute Won' : '&#9878;&#65039; Dispute Lost'}
                       </span>
                     )}
                   </div>
@@ -690,8 +612,8 @@ const SellerListings = ({ myProducts, onList, onShip, onDispute }: any) => {
                   {p.disputeResolved && (
                     <p className={`dispute-result-text ${p.iWon ? 'result-win' : 'result-lose'}`}>
                       {p.iWon
-                        ? `✓ Payment of ${ethers.formatEther(p.price)} ETH received in your wallet`
-                        : `✗ Payment of ${ethers.formatEther(p.price)} ETH refunded to buyer, 0.5 ETH security deposit forfeited`}
+                        ? `\u2713 Payment of ${ethers.formatEther(p.price)} ETH received in your wallet`
+                        : `\u2717 Payment of ${ethers.formatEther(p.price)} ETH refunded to buyer, 0.5 ETH security deposit forfeited`}
                     </p>
                   )}
                 </div>
@@ -702,7 +624,7 @@ const SellerListings = ({ myProducts, onList, onShip, onDispute }: any) => {
                     <input
                       placeholder="Tracking / Shipment ref."
                       className="form-input form-input-sm"
-                      onChange={e => setShipHash({ ...shipHash, [p.id]: e.target.value })}
+                      onChange={e => setShipHash(prev => ({ ...prev, [p.id]: e.target.value }))}
                     />
                     <button className="btn-primary btn-sm" onClick={() => onShip(p.id, shipHash[p.id] || "SENT")}>
                       <Send size={14} /> Confirm Shipment
@@ -722,18 +644,15 @@ const SellerListings = ({ myProducts, onList, onShip, onDispute }: any) => {
           ))}
         </div>
       )}
+
       {disputeTarget && (
-        <DisputeModal
-          order={disputeTarget}
-          onSubmit={onDispute}
-          onClose={() => setDisputeTarget(null)}
-        />
+        <DisputeModal order={disputeTarget} onSubmit={onDispute} onClose={() => setDisputeTarget(null)} />
       )}
     </div>
   );
 };
 
-// ─── Arbitrator Pool ───────────────────────────────────────────────────────────
+// ── ArbitratorPool ────────────────────────────────────────────────────────────
 const ArbitratorPool = ({ disputes, isReviewer, onJoin, onVote, onForceRegister, onWithdrawStake, onSettle }: any) => {
   const [showTerms, setShowTerms] = useState(false);
 
@@ -744,15 +663,12 @@ const ArbitratorPool = ({ disputes, isReviewer, onJoin, onVote, onForceRegister,
           <p className="page-eyebrow">Arbitration Hall</p>
           <h2 className="page-title">Active Cases</h2>
         </div>
-        {!isReviewer && (
+        {isReviewer ? (
+          <span className="arbitrator-badge"><ShieldCheck size={13} /> Registered Arbitrator</span>
+        ) : (
           <button className="btn-outline" onClick={() => setShowTerms(true)}>
             <Gavel size={14} /> Apply as Arbitrator
           </button>
-        )}
-        {isReviewer && (
-          <span className="arbitrator-badge">
-            <ShieldCheck size={13} /> Registered Arbitrator
-          </span>
         )}
       </div>
 
@@ -761,7 +677,10 @@ const ArbitratorPool = ({ disputes, isReviewer, onJoin, onVote, onForceRegister,
           <Cpu size={16} />
           <div>
             <strong>Industry Experts Only</strong>
-            <p>Arbitrators must have completed ≥ 10 verified transactions on DeTrust Market. A stake of 0.1 ETH is required per case to ensure honest participation.</p>
+            <p>
+              Arbitrators must have completed &ge; 10 verified transactions on DeTrust Market.
+              A stake of 0.1 ETH is required per case to ensure honest participation.
+            </p>
           </div>
         </div>
       )}
@@ -774,12 +693,14 @@ const ArbitratorPool = ({ disputes, isReviewer, onJoin, onVote, onForceRegister,
       ) : (
         <div className="dispute-list">
           {disputes.map((d: any) => {
-            const meta = parseProductMeta(d.ipfsHash || "");
-            const totalVotes = d.buyerVotes + d.sellerVotes;
+            const meta        = parseProductMeta(d.ipfsHash || "");
+            const totalVotes  = d.buyerVotes + d.sellerVotes;
             const votingClosed = d.resolved || totalVotes >= 3;
+
             return (
               <div key={d.productId} className="dispute-card">
 
+                {/* Case header */}
                 <div className="dispute-header">
                   <div className="dispute-meta">
                     <span className="dispute-id">Case #{d.productId.toString()}</span>
@@ -795,6 +716,7 @@ const ArbitratorPool = ({ disputes, isReviewer, onJoin, onVote, onForceRegister,
                   </div>
                 </div>
 
+                {/* Component details */}
                 <div className="dispute-info-grid">
                   <div className="dispute-info-item">
                     <span className="dispute-info-label">Component</span>
@@ -832,38 +754,34 @@ const ArbitratorPool = ({ disputes, isReviewer, onJoin, onVote, onForceRegister,
                   )}
                   <div className="dispute-info-item">
                     <span className="dispute-info-label">Order Status</span>
-                    <span className={`status-badge ${STATUS_MAP[d.status]?.color}`}>
-                      {STATUS_MAP[d.status]?.label}
-                    </span>
+                    <span className={`status-badge ${STATUS_MAP[d.status]?.color}`}>{STATUS_MAP[d.status]?.label}</span>
                   </div>
                   {d.disputeReason && (
                     <div className="dispute-info-item dispute-info-full">
-                      <span className="dispute-info-label">Buyer's Stated Reason</span>
+                      <span className="dispute-info-label">Stated Reason</span>
                       <span className="dispute-reason-text">{d.disputeReason}</span>
                     </div>
                   )}
                 </div>
 
+                {/* Juror actions */}
                 <div className="dispute-actions">
                   {d.resolved ? (
                     <div className="juror-result-box">
                       <span className="text-muted">This case is closed</span>
-                      {d.jurorResult && (
+                      {d.jurorResult ? (
                         <div className={`juror-result-detail ${d.jurorResult.iWon ? 'result-win' : 'result-lose'}`}>
                           <span className="juror-result-verdict">
-                            {d.jurorResult.iWon ? '✓ Correct Vote' : '✗ Incorrect Vote'}
-                            {' · '}
+                            {d.jurorResult.iWon ? '\u2713 Correct Vote' : '\u2717 Incorrect Vote'}
+                            {' \u00b7 '}
                             {d.jurorResult.buyerWon ? 'Buyer Prevailed' : 'Seller Prevailed'}
                           </span>
                           <span className="juror-result-amount">
-                            {d.jurorResult.iWon
-                              ? `+0.1 ETH stake returned + reward`
-                              : `-0.1 ETH stake forfeited`}
+                            {d.jurorResult.iWon ? '+0.1 ETH stake returned + reward' : '-0.1 ETH stake forfeited'}
                           </span>
                         </div>
-                      )}
-                      {d.resolved && !d.jurorResult && (
-                        <span className="text-muted" style={{fontSize:'12px'}}>You did not participate in this case</span>
+                      ) : (
+                        <span className="text-muted" style={{ fontSize: '12px' }}>You did not participate in this case</span>
                       )}
                     </div>
                   ) : !d.isStaked ? (
@@ -874,27 +792,19 @@ const ArbitratorPool = ({ disputes, isReviewer, onJoin, onVote, onForceRegister,
                     ) : (
                       <span className="text-muted">Voting has ended</span>
                     )
-                  ) : (
+                  ) : !d.hasVoted && !votingClosed ? (
                     <>
-                      {!d.hasVoted && !votingClosed ? (
-                        <>
-                          <button className="btn-primary btn-sm" onClick={() => onVote(d.productId, 1)}>
-                            Side with Buyer
-                          </button>
-                          <button className="btn-outline btn-sm" onClick={() => onVote(d.productId, 2)}>
-                            Side with Seller
-                          </button>
-                          <button className="btn-ghost btn-sm" onClick={() => onWithdrawStake(d.productId)}
-                            title="Exit arbitration and reclaim your 0.1 ETH stake">
-                            Exit Case
-                          </button>
-                        </>
-                      ) : d.hasVoted ? (
-                        <span className="text-success">✓ Vote submitted — awaiting other arbitrators</span>
-                      ) : (
-                        <span className="text-muted">Voting has ended</span>
-                      )}
+                      <button className="btn-primary btn-sm" onClick={() => onVote(d.productId, 1)}>Side with Buyer</button>
+                      <button className="btn-outline btn-sm" onClick={() => onVote(d.productId, 2)}>Side with Seller</button>
+                      <button className="btn-ghost btn-sm" onClick={() => onWithdrawStake(d.productId)}
+                        title="Exit arbitration and reclaim your 0.1 ETH stake">
+                        Exit Case
+                      </button>
                     </>
+                  ) : d.hasVoted ? (
+                    <span className="text-success">\u2713 Vote submitted &mdash; awaiting other arbitrators</span>
+                  ) : (
+                    <span className="text-muted">Voting has ended</span>
                   )}
                 </div>
               </div>
@@ -904,253 +814,221 @@ const ArbitratorPool = ({ disputes, isReviewer, onJoin, onVote, onForceRegister,
       )}
 
       {showTerms && (
-        <ArbitratorTermsModal
-          onConfirm={onForceRegister}
-          onClose={() => setShowTerms(false)}
-        />
+        <ArbitratorTermsModal onConfirm={onForceRegister} onClose={() => setShowTerms(false)} />
       )}
     </div>
   );
 };
 
-// ─── Main App ──────────────────────────────────────────────────────────────────
+// ── App (root component) ──────────────────────────────────────────────────────
 export default function App() {
   const [account, setAccount] = useState("");
   const [disputeReasons, setDisputeReasons] = useState<Record<string, string>>({});
   const [data, setData] = useState<any>({
-    products: [], mySales: [], myOrders: [], myDisputes: [], deposit: "0", wallet: "0", isReviewer: false
+    products: [], mySales: [], myOrders: [], myDisputes: [],
+    deposit: "0", wallet: "0", isReviewer: false,
   });
 
+  // Request a new account selection on every click (allows switching accounts)
   const connectWallet = async () => {
     if (!window.ethereum) return alert("Please install the MetaMask extension");
     try {
       await window.ethereum.request({ method: "wallet_requestPermissions", params: [{ eth_accounts: {} }] });
       const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
       setAccount(accounts[0]);
-    } catch (e) { }
+    } catch {}
   };
 
+  // Helper: return a signer-bound contract instance
+  const getSigner = () => new ethers.BrowserProvider(window.ethereum).getSigner();
+  const getMarket  = async () => new ethers.Contract(ADDRESSES.MARKET,   ProductMarketABI.abi,    await getSigner());
+  const getDispute = async () => new ethers.Contract(ADDRESSES.DISPUTE,  DisputeManagerABI.abi,   await getSigner());
+
+  // Load all on-chain state for the connected account
   const loadData = useCallback(async () => {
     if (!window.ethereum || !account) return;
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
-      const market = new ethers.Contract(ADDRESSES.MARKET, ProductMarketABI.abi, provider);
-      const disputeManager = new ethers.Contract(ADDRESSES.DISPUTE, DisputeManagerABI.abi, provider);
+      const market   = new ethers.Contract(ADDRESSES.MARKET,   ProductMarketABI.abi,    provider);
+      const dispute  = new ethers.Contract(ADDRESSES.DISPUTE,  DisputeManagerABI.abi,   provider);
       const registry = new ethers.Contract(ADDRESSES.REGISTRY, ReviewerRegistryABI.abi, provider);
 
-      const revStatus = await registry.isReviewer(account).catch(() => false);
-      const latestId = await market.getLatestProductId().catch(() => 0n);
-      const allIds = Array.from({ length: Number(latestId) }, (_, i) => (i + 1).toString());
+      const [revStatus, latestId] = await Promise.all([
+        registry.isReviewer(account).catch(() => false),
+        market.getLatestProductId().catch(() => 0n),
+      ]);
 
-      const allFetchedProducts = await Promise.all(allIds.map(async (id) => {
-        try {
-          const p = await market.products(id);
-          return safeParseProduct(p);
-        } catch (e) { return null; }
-      }));
-      const validProducts = allFetchedProducts.filter((p): p is any => p !== null && p.id !== "0");
+      // Fetch every product by sequential ID
+      const allIds = Array.from({ length: Number(latestId) }, (_, i) => String(i + 1));
+      const fetched = await Promise.all(
+        allIds.map(id => market.products(id).then(safeParseProduct).catch(() => null))
+      );
+      const validProducts = fetched.filter((p): p is Product => p !== null && p.id !== "0");
 
+      // For closed (Resolved) products, attach dispute outcome so the UI can display win/loss
+      const enrichWithDisputeResult = async (products: Product[]) =>
+        Promise.all(products.map(async p => {
+          if (p.status !== 5) return p;
+          try {
+            const [,,,, resolved, buyerWon] = await dispute.getDisputeInfo(p.id);
+            if (resolved) {
+              const isBuyer = p.buyer.toLowerCase() === account.toLowerCase();
+              return { ...p, disputeResolved: true, buyerWon, iWon: isBuyer ? buyerWon : !buyerWon };
+            }
+          } catch {}
+          return p;
+        }));
+
+      const mySalesRaw  = validProducts.filter(p => p.seller.toLowerCase() === account.toLowerCase());
+      const myOrdersRaw = validProducts.filter(p => p.buyer.toLowerCase()  === account.toLowerCase());
+      const [mySales, myOrders] = await Promise.all([
+        enrichWithDisputeResult(mySalesRaw),
+        enrichWithDisputeResult(myOrdersRaw),
+      ]);
+
+      // Arbitrators: load their assigned dispute cases
       let activeDisputes: any[] = [];
       if (revStatus) {
-        const disputeIds: any[] = await disputeManager.getDisputesByReviewer(account).catch(() => []);
+        const disputeIds: any[] = await dispute.getDisputesByReviewer(account).catch(() => []);
         activeDisputes = (await Promise.all(disputeIds.map(async (id: any) => {
           try {
-            const [, buyerVotes, sellerVotes, , resolved, buyerWon] = await disputeManager.getDisputeInfo(id);
-            const [hasStaked, hasVoted] = await disputeManager.getReviewerStakeStatus(id, account).catch(() => [false, false]);
-            const myVoteRaw = await disputeManager.getReviewerVote(id, account).catch(() => 0);
-            const myVote = Number(myVoteRaw);
+            const [, buyerVotes, sellerVotes,, resolved, buyerWon] = await dispute.getDisputeInfo(id);
+            const [hasStaked, hasVoted] = await dispute.getReviewerStakeStatus(id, account).catch(() => [false, false]);
+            const myVote = Number(await dispute.getReviewerVote(id, account).catch(() => 0));
             const p = await market.getProduct(id).catch(() => null);
 
-            let jurorResult = null;
-            if (resolved && myVote !== 0) {
-              const winningVote = buyerWon ? 1 : 2;
-              const iWon = myVote === winningVote;
-              jurorResult = { iWon, myVote, buyerWon };
-            }
+            const jurorResult = (resolved && myVote !== 0)
+              ? { iWon: myVote === (buyerWon ? 1 : 2), myVote, buyerWon }
+              : null;
 
             return {
               productId: id,
-              buyerVotes: Number(buyerVotes),
-              sellerVotes: Number(sellerVotes),
-              resolved,
-              buyerWon,
-              isStaked: hasStaked,
-              hasVoted,
-              myVote,
+              buyerVotes:    Number(buyerVotes),
+              sellerVotes:   Number(sellerVotes),
+              resolved,      buyerWon,
+              isStaked:      hasStaked,
+              hasVoted,      myVote,
               jurorResult,
-              ipfsHash: p?.ipfsHash || "",
-              status: p ? Number(p.status) : 4,
-              disputeReason: disputeReasons[id.toString()] || ""
+              ipfsHash:      p?.ipfsHash || "",
+              status:        p ? Number(p.status) : 4,
+              disputeReason: disputeReasons[id.toString()] || "",
             };
-          } catch (e) { return null; }
+          } catch { return null; }
         }))).filter(Boolean);
       }
 
-      const dep = await market.depositBalance(account).catch(() => 0n);
-      const wal = await market.walletBalance(account).catch(() => 0n);
-
-      const enrichWithDisputeResult = async (products: any[]) => {
-        return Promise.all(products.map(async (p) => {
-          if (p.status === 5) {
-            try {
-              const [, , , , resolved, buyerWon] = await disputeManager.getDisputeInfo(p.id);
-              if (resolved) {
-                const isBuyer = p.buyer.toLowerCase() === account.toLowerCase();
-                return { ...p, disputeResolved: true, buyerWon, iWon: isBuyer ? buyerWon : !buyerWon };
-              }
-            } catch (e) {}
-          }
-          return p;
-        }));
-      };
-
-      const mySalesRaw = validProducts.filter((p: any) => p.seller.toLowerCase() === account.toLowerCase());
-      const myOrdersRaw = validProducts.filter((p: any) => p.buyer.toLowerCase() === account.toLowerCase());
-      const [mySales, myOrders] = await Promise.all([
-        enrichWithDisputeResult(mySalesRaw),
-        enrichWithDisputeResult(myOrdersRaw)
+      const [dep, wal] = await Promise.all([
+        market.depositBalance(account).catch(() => 0n),
+        market.walletBalance(account).catch(() => 0n),
       ]);
 
       setData((prev: any) => ({
         ...prev,
-        products: validProducts,
-        mySales,
-        myOrders,
-        myDisputes: activeDisputes,
-        isReviewer: revStatus,
+        products: validProducts, mySales, myOrders,
+        myDisputes: activeDisputes, isReviewer: revStatus,
         deposit: ethers.formatEther(dep),
-        wallet: ethers.formatEther(wal)
+        wallet:  ethers.formatEther(wal),
       }));
-    } catch (err) { console.error("Failed to load data:", err); }
-  }, [account]);
+    } catch (err) { console.error("loadData error:", err); }
+  }, [account, disputeReasons]);
 
   useEffect(() => {
     if (account) loadData();
-    if (window.ethereum) {
-      window.ethereum.on('accountsChanged', (accs: any) => setAccount(accs[0] || ""));
-    }
+    window.ethereum?.on('accountsChanged', (accs: any) => setAccount(accs[0] || ""));
   }, [account, loadData]);
 
+  // ── Transaction handlers ───────────────────────────────────────────────────
+
   const handleDeposit = async () => {
-    try {
-      const signer = await (new ethers.BrowserProvider(window.ethereum)).getSigner();
-      const market = new ethers.Contract(ADDRESSES.MARKET, ProductMarketABI.abi, signer);
-      await (await market.deposit({ value: ethers.parseEther("1.0") })).wait(); loadData();
-    } catch (e) { alert("Deposit failed"); }
+    try { await (await (await getMarket()).deposit({ value: ethers.parseEther("1.0") })).wait(); loadData(); }
+    catch { alert("Deposit failed"); }
   };
 
   const handleWalletDeposit = async (amount: string) => {
     if (!amount || parseFloat(amount) <= 0) return alert("Please enter a valid amount");
-    try {
-      const signer = await (new ethers.BrowserProvider(window.ethereum)).getSigner();
-      const market = new ethers.Contract(ADDRESSES.MARKET, ProductMarketABI.abi, signer);
-      await (await market.walletDeposit({ value: ethers.parseEther(amount) })).wait(); loadData();
-    } catch (e) { alert("Top-up failed"); }
+    try { await (await (await getMarket()).walletDeposit({ value: ethers.parseEther(amount) })).wait(); loadData(); }
+    catch { alert("Top-up failed"); }
   };
 
   const handleWalletWithdraw = async (amount: string) => {
     if (!amount || parseFloat(amount) <= 0) return alert("Please enter a valid amount");
-    try {
-      const signer = await (new ethers.BrowserProvider(window.ethereum)).getSigner();
-      const market = new ethers.Contract(ADDRESSES.MARKET, ProductMarketABI.abi, signer);
-      await (await market.walletWithdraw(ethers.parseEther(amount))).wait(); loadData();
-    } catch (e: any) { alert(e.reason || "Withdrawal failed — check your balance"); }
+    try { await (await (await getMarket()).walletWithdraw(ethers.parseEther(amount))).wait(); loadData(); }
+    catch (e: any) { alert(e.reason || "Withdrawal failed — check your balance"); }
   };
 
   const handleList = async (metaJson: string, p: string) => {
-    try {
-      const signer = await (new ethers.BrowserProvider(window.ethereum)).getSigner();
-      const market = new ethers.Contract(ADDRESSES.MARKET, ProductMarketABI.abi, signer);
-      await (await market.listProduct(metaJson, ethers.parseEther(p))).wait(); loadData();
-    } catch (e: any) { alert(e.reason || "Listing failed — ensure your security deposit is sufficient"); }
+    try { await (await (await getMarket()).listProduct(metaJson, ethers.parseEther(p))).wait(); loadData(); }
+    catch (e: any) { alert(e.reason || "Listing failed — ensure your security deposit is sufficient"); }
   };
 
-  const handleBuy = async (id: any, _price: any) => {
-    try {
-      const signer = await (new ethers.BrowserProvider(window.ethereum)).getSigner();
-      const market = new ethers.Contract(ADDRESSES.MARKET, ProductMarketABI.abi, signer);
-      await (await market.purchaseProduct(id)).wait(); loadData();
-    } catch (e: any) { alert(e.reason || "Purchase failed — check your wallet balance"); }
+  const handleBuy = async (id: any) => {
+    try { await (await (await getMarket()).purchaseProduct(id)).wait(); loadData(); }
+    catch (e: any) { alert(e.reason || "Purchase failed — check your wallet balance"); }
   };
 
   const handleShip = async (id: any, hash: string) => {
-    try {
-      const signer = await (new ethers.BrowserProvider(window.ethereum)).getSigner();
-      const market = new ethers.Contract(ADDRESSES.MARKET, ProductMarketABI.abi, signer);
-      await (await market.confirmShipment(id, hash)).wait(); loadData();
-    } catch (e: any) { alert(`Shipment failed: ${e.reason || e.message}`); }
+    try { await (await (await getMarket()).confirmShipment(id, hash)).wait(); loadData(); }
+    catch (e: any) { alert(`Shipment failed: ${e.reason || e.message}`); }
   };
 
   const handleConfirm = async (id: any) => {
-    try {
-      const signer = await (new ethers.BrowserProvider(window.ethereum)).getSigner();
-      const market = new ethers.Contract(ADDRESSES.MARKET, ProductMarketABI.abi, signer);
-      await (await market.confirmReceipt(id)).wait(); loadData();
-    } catch (e) { alert("Confirmation failed"); }
+    try { await (await (await getMarket()).confirmReceipt(id)).wait(); loadData(); }
+    catch { alert("Confirmation failed"); }
   };
 
   const handleDispute = async (id: any, reason: string) => {
     try {
-      const signer = await (new ethers.BrowserProvider(window.ethereum)).getSigner();
-      const market = new ethers.Contract(ADDRESSES.MARKET, ProductMarketABI.abi, signer);
-      await (await market.raiseDispute(id)).wait();
+      await (await (await getMarket()).raiseDispute(id)).wait();
       if (reason) setDisputeReasons(prev => ({ ...prev, [id.toString()]: reason }));
       loadData();
     } catch (e: any) { alert(`Dispute failed: ${e.reason || "Check that both parties have sufficient security deposits"}`); }
   };
 
-  const handleWithdrawStake = async (productId: string) => {
-    try {
-      const signer = await (new ethers.BrowserProvider(window.ethereum)).getSigner();
-      const dispute = new ethers.Contract(ADDRESSES.DISPUTE, DisputeManagerABI.abi, signer);
-      await (await dispute.withdrawStake(BigInt(productId))).wait(); loadData();
-    } catch (e: any) { alert("Exit failed: " + (e.reason || e.message)); }
-  };
-
   const handleJoinDispute = async (productId: string) => {
-    try {
-      const signer = await (new ethers.BrowserProvider(window.ethereum)).getSigner();
-      const dispute = new ethers.Contract(ADDRESSES.DISPUTE, DisputeManagerABI.abi, signer);
-      await (await dispute.stakeToEnter(BigInt(productId))).wait(); loadData();
-    } catch (e: any) { alert("Failed to join: " + (e.reason || "You may not be assigned to this case or have insufficient balance")); }
+    try { await (await (await getDispute()).stakeToEnter(BigInt(productId))).wait(); loadData(); }
+    catch (e: any) { alert("Failed to join: " + (e.reason || "You may not be assigned to this case or have insufficient balance")); }
   };
 
   const handleVote = async (productId: string, choice: number) => {
-    try {
-      const signer = await (new ethers.BrowserProvider(window.ethereum)).getSigner();
-      const dispute = new ethers.Contract(ADDRESSES.DISPUTE, DisputeManagerABI.abi, signer);
-      await (await dispute.castVote(BigInt(productId), choice)).wait(); loadData();
-    } catch (e: any) { alert("Vote failed: " + (e.reason || e.message)); }
+    try { await (await (await getDispute()).castVote(BigInt(productId), choice)).wait(); loadData(); }
+    catch (e: any) { alert("Vote failed: " + (e.reason || e.message)); }
+  };
+
+  const handleWithdrawStake = async (productId: string) => {
+    try { await (await (await getDispute()).withdrawStake(BigInt(productId))).wait(); loadData(); }
+    catch (e: any) { alert("Exit failed: " + (e.reason || e.message)); }
   };
 
   const handleSettle = async (productId: string) => {
-    try {
-      const signer = await (new ethers.BrowserProvider(window.ethereum)).getSigner();
-      const dispute = new ethers.Contract(ADDRESSES.DISPUTE, DisputeManagerABI.abi, signer);
-      await (await dispute.settleDispute(BigInt(productId))).wait(); loadData();
-    } catch (e: any) { alert("Settlement failed: " + (e.reason || "Voting period may still be ongoing")); }
+    try { await (await (await getDispute()).settleDispute(BigInt(productId))).wait(); loadData(); }
+    catch (e: any) { alert("Settlement failed: " + (e.reason || "Voting period may still be ongoing")); }
   };
 
   const handleForceRegister = async () => {
     try {
-      const signer = await (new ethers.BrowserProvider(window.ethereum)).getSigner();
-      const myAddress = await signer.getAddress();
+      const signer   = await getSigner();
       const registry = new ethers.Contract(ADDRESSES.REGISTRY, ReviewerRegistryABI.abi, signer);
-      await (await registry.forceRegister(myAddress)).wait(); loadData();
+      await (await registry.forceRegister(await signer.getAddress())).wait();
+      loadData();
     } catch (e: any) { alert("Registration failed: " + (e.reason || "Check console for details")); }
   };
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <Router>
       <div className="app-shell">
-        <Navbar account={account} deposit={data.deposit} wallet={data.wallet} connect={connectWallet} onDeposit={handleDeposit} onWalletDeposit={handleWalletDeposit} onWalletWithdraw={handleWalletWithdraw} />
+        <Navbar
+          account={account} deposit={data.deposit} wallet={data.wallet}
+          connect={connectWallet} onDeposit={handleDeposit}
+          onWalletDeposit={handleWalletDeposit} onWalletWithdraw={handleWalletWithdraw}
+        />
         <main className="app-main">
           <Routes>
-            <Route path="/" element={<RoleSelectPage account={account} connect={connectWallet} />} />
-            <Route path="/buyer/market" element={<BuyerMarket products={data.products} onBuy={handleBuy} />} />
-            <Route path="/buyer/orders" element={<BuyerOrders orders={data.myOrders} onConfirm={handleConfirm} onDispute={handleDispute} />} />
-            <Route path="/seller/listings" element={<SellerListings myProducts={data.mySales} onList={handleList} onShip={handleShip} onDispute={handleDispute} />} />
-            <Route path="/arbitrator/pool" element={<ArbitratorPool disputes={data.myDisputes} isReviewer={data.isReviewer} onJoin={handleJoinDispute} onVote={handleVote} onForceRegister={handleForceRegister} onWithdrawStake={handleWithdrawStake} onSettle={handleSettle} />} />
+            <Route path="/"                 element={<RoleSelectPage account={account} connect={connectWallet} />} />
+            <Route path="/buyer/market"     element={<BuyerMarket products={data.products} onBuy={handleBuy} />} />
+            <Route path="/buyer/orders"     element={<BuyerOrders orders={data.myOrders} onConfirm={handleConfirm} onDispute={handleDispute} />} />
+            <Route path="/seller/listings"  element={<SellerListings myProducts={data.mySales} onList={handleList} onShip={handleShip} onDispute={handleDispute} />} />
+            <Route path="/arbitrator/pool"  element={<ArbitratorPool disputes={data.myDisputes} isReviewer={data.isReviewer} onJoin={handleJoinDispute} onVote={handleVote} onForceRegister={handleForceRegister} onWithdrawStake={handleWithdrawStake} onSettle={handleSettle} />} />
           </Routes>
         </main>
       </div>
