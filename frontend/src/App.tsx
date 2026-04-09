@@ -451,7 +451,7 @@ const BuyerOrders = ({ orders, onConfirm, onDispute }: any) => {
                     <span className="order-id">#{o.id}</span>
                     {o.disputeResolved && (
                       <span className={`status-badge ${o.iWon ? 'status-success' : 'status-dispute'}`}>
-                        {o.iWon ? '&#9878;&#65039; Dispute Won' : '&#9878;&#65039; Dispute Lost'}
+                        {o.iWon ? '⚖️ Dispute Won' : '⚖️ Dispute Lost'}
                       </span>
                     )}
                   </div>
@@ -604,7 +604,7 @@ const SellerListings = ({ myProducts, onList, onShip, onDispute }: any) => {
                     <span className="order-id">#{p.id}</span>
                     {p.disputeResolved && (
                       <span className={`status-badge ${p.iWon ? 'status-success' : 'status-dispute'}`}>
-                        {p.iWon ? '&#9878;&#65039; Dispute Won' : '&#9878;&#65039; Dispute Lost'}
+                        {p.iWon ? '⚖️ Dispute Won' : '⚖️ Dispute Lost'}
                       </span>
                     )}
                   </div>
@@ -802,7 +802,7 @@ const ArbitratorPool = ({ disputes, isReviewer, onJoin, onVote, onForceRegister,
                       </button>
                     </>
                   ) : d.hasVoted ? (
-                    <span className="text-success">\u2713 Vote submitted &mdash; awaiting other arbitrators</span>
+                    <span className="text-success">✓ Vote submitted &mdash; awaiting other arbitrators</span>
                   ) : (
                     <span className="text-muted">Voting has ended</span>
                   )}
