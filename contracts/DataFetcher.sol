@@ -17,7 +17,7 @@ contract DataFetcher {
     DisputeManager public dispute;
 
     constructor(address _market, address _dispute) {
-        market  = ProductMarket(_market);
+        market  = ProductMarket(payable(_market));
         dispute = DisputeManager(payable(_dispute));
     }
 
