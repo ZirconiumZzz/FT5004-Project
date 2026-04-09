@@ -7,7 +7,6 @@
 ## Table of Contents
 
 - [Overview](#overview)
-- [Why Blockchain](#why-blockchain)
 - [Architecture](#architecture)
 - [Smart Contracts](#smart-contracts)
 - [Features](#features)
@@ -25,18 +24,6 @@
 DeTrust Market is a decentralised application (DApp) for high-value B2B semiconductor component trading. It automates the full transaction lifecycle — listing, escrow payment, shipment verification, receipt confirmation, and dispute arbitration — entirely through smart contracts on Ethereum.
 
 The platform is built for the semiconductor spot market, where counterfeit components and payment disputes are costly and common. By removing the need for a trusted intermediary, DeTrust Market ensures that funds are released only when contractually defined conditions are met, and that disputes are resolved by verified industry experts rather than a central authority.
-
----
-
-## Why Blockchain
-
-Three properties of this use case make a centralised database insufficient:
-
-**1. Custody risk.** In high-value B2B transactions (often exceeding tens of ETH), a central administrator who controls escrowed funds is a single point of failure for fraud or coercion. DeTrust Market transfers custody entirely to smart contract logic — no human can override a payment once conditions are met.
-
-**2. Tamper-proof dispute history.** The semiconductor market is plagued by counterfeit and re-marked components. A centralised system allows suppliers to collude with administrators to modify transaction records. Encoding every juror vote and dispute outcome on-chain makes the entire arbitration record permanently and publicly verifiable.
-
-**3. Instant, unconditional settlement.** Traditional platforms require human agents to transfer funds after a verdict, introducing delays that are costly in high-velocity manufacturing supply chains. DeTrust Market executes fund redistribution atomically upon resolution, eliminating human error and non-compliance.
 
 ---
 
