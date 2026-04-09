@@ -1,7 +1,7 @@
-/* ─── Google Fonts ─────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&family=Playfair+Display:wght@700&display=swap');
 
-/* ─── Design Tokens ────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 :root {
   /* Colors */
   --navy-950: #060d1f;
@@ -70,7 +70,7 @@
   --nav-h: 64px;
 }
 
-/* ─── Reset ─────────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html {
@@ -93,7 +93,7 @@ button { font-family: inherit; cursor: pointer; border: none; outline: none; }
 input, textarea { font-family: inherit; outline: none; }
 img { display: block; max-width: 100%; }
 
-/* ─── App Shell ─────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .app-shell {
   min-height: 100svh;
   display: flex;
@@ -105,7 +105,7 @@ img { display: block; max-width: 100%; }
   padding-top: var(--nav-h);
 }
 
-/* ─── Navbar ────────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .navbar {
   position: fixed;
   top: 0; left: 0; right: 0;
@@ -205,7 +205,7 @@ img { display: block; max-width: 100%; }
 }
 .btn-connect:hover { background: var(--navy-700); transform: translateY(-1px); box-shadow: var(--shadow-md); }
 
-/* ─── Page Layout ───────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .page-container {
   max-width: 960px;
   margin: 0 auto;
@@ -252,7 +252,7 @@ img { display: block; max-width: 100%; }
   margin: 32px 0 16px;
 }
 
-/* ─── Landing Page ──────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .landing {
   min-height: calc(100svh - var(--nav-h));
   display: flex;
@@ -364,7 +364,7 @@ img { display: block; max-width: 100%; }
 .stat-label { font-size: 12px; color: rgba(255,255,255,0.4); margin-top: 2px; }
 .stat-divider { width: 1px; height: 36px; background: rgba(255,255,255,0.1); }
 
-/* ─── Role Cards ────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .role-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -429,7 +429,7 @@ img { display: block; max-width: 100%; }
   color: white;
 }
 
-/* ─── Buttons ───────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .btn-primary {
   display: inline-flex;
   align-items: center;
@@ -512,7 +512,7 @@ img { display: block; max-width: 100%; }
 .text-muted { color: var(--text-muted); font-size: 14px; }
 .text-success { color: var(--success); font-size: 14px; font-weight: 600; }
 
-/* ─── Status Badges ─────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -532,7 +532,7 @@ img { display: block; max-width: 100%; }
 .status-dispute  { background: var(--danger-bg); color: var(--danger); }
 .status-closed   { background: var(--gray-100); color: var(--gray-400); }
 
-/* ─── Product Grid ──────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .product-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -609,7 +609,7 @@ img { display: block; max-width: 100%; }
   font-family: var(--font-mono);
 }
 
-/* ─── Order / Listing List ──────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .order-list { display: flex; flex-direction: column; gap: 10px; }
 
 .order-card {
@@ -689,7 +689,7 @@ img { display: block; max-width: 100%; }
   font-family: var(--font-mono);
 }
 
-/* ─── Form Card ─────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .form-card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -765,7 +765,7 @@ img { display: block; max-width: 100%; }
 .form-input::placeholder { color: var(--gray-400); }
 .form-input.form-input-sm { width: 120px; }
 
-/* ─── Dispute Cards ─────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .dispute-list { display: flex; flex-direction: column; gap: 12px; }
 
 .dispute-card {
@@ -831,7 +831,7 @@ img { display: block; max-width: 100%; }
   flex-wrap: wrap;
 }
 
-/* ─── Empty State ───────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -847,7 +847,7 @@ img { display: block; max-width: 100%; }
   color: var(--text-muted);
 }
 
-/* ─── Wallet Badge (Navbar) ─────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .wallet-badge {
   display: flex;
   align-items: center;
@@ -897,7 +897,7 @@ img { display: block; max-width: 100%; }
   background: var(--border);
 }
 
-/* ─── Wallet Modal ──────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -1016,7 +1016,7 @@ img { display: block; max-width: 100%; }
   padding: 12px;
 }
 
-/* ─── Dispute Modal ─────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .dispute-modal-product {
   background: var(--gray-50);
   border: 1px solid var(--border);
@@ -1057,7 +1057,7 @@ img { display: block; max-width: 100%; }
   margin-bottom: 16px;
 }
 
-/* ─── Dispute Info Grid ─────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .dispute-info-grid {
   display: flex;
   flex-wrap: wrap;
@@ -1100,7 +1100,7 @@ img { display: block; max-width: 100%; }
   white-space: pre-wrap;
 }
 
-/* ─── Dispute Result (买卖方) ────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .dispute-result-text {
   font-size: 12px;
   font-weight: 600;
@@ -1109,7 +1109,7 @@ img { display: block; max-width: 100%; }
 .result-win { color: var(--success); }
 .result-lose { color: var(--danger); }
 
-/* ─── Juror Result (仲裁大厅) ───────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .juror-result-box {
   display: flex;
   flex-direction: column;
@@ -1150,7 +1150,7 @@ img { display: block; max-width: 100%; }
   color: var(--text-strong);
 }
 
-/* ─── Product Meta Grid (component specs) ───────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .product-meta-grid {
   display: flex;
   flex-wrap: wrap;
@@ -1181,7 +1181,7 @@ img { display: block; max-width: 100%; }
   font-family: var(--font-mono);
 }
 
-/* ─── Seller form: optional fields ─────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .form-optional-label {
   display: flex;
   align-items: center;
@@ -1220,7 +1220,7 @@ img { display: block; max-width: 100%; }
   margin-left: 2px;
 }
 
-/* ─── Arbitrator terms modal ────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .modal-box-lg {
   max-width: 540px;
 }
@@ -1298,7 +1298,7 @@ img { display: block; max-width: 100%; }
   flex-shrink: 0;
 }
 
-/* ─── Arbitrator status badge ───────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .arbitrator-badge {
   display: inline-flex;
   align-items: center;
@@ -1312,7 +1312,7 @@ img { display: block; max-width: 100%; }
   border-radius: var(--radius-md);
 }
 
-/* ─── Arbitrator info banner ────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────── */
 .arbitrator-info-banner {
   display: flex;
   gap: 14px;
