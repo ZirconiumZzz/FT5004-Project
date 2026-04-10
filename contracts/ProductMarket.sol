@@ -16,6 +16,11 @@ import "./DisputeManager.sol";
  *  - depositBalance : mandatory security bond (>= 1 ETH to list or purchase)
  *  - walletBalance  : active trading wallet used for purchases and juror staking
  *
+ * Tiered structure (based on product price):
+ *  Tier 1: 5–20 ETH   → deposit 1 ETH, dispute stake 0.5 ETH, juror stake 0.1 ETH, platform fee 0.1 ETH
+ *  Tier 2: 20–100 ETH → deposit 3 ETH, dispute stake 1.0 ETH, juror stake 0.2 ETH, platform fee 0.15 ETH
+ *  Tier 3: >100 ETH   → deposit 8 ETH, dispute stake 3.0 ETH, juror stake 0.6 ETH, platform fee 0.25 ETH
+ *
  * Conservation invariant:
  *   sum(depositBalance) + sum(walletBalance) + platformBalance == address(this).balance
  */
@@ -23,8 +28,27 @@ contract ProductMarket {
     ReviewerRegistry public registry;
     DisputeManager   public disputeManager;
 
-    uint256 public constant MIN_DEPOSIT   = 1 ether;
-    uint256 public constant DISPUTE_STAKE = 0.5 ether;
+    // ── Tier thresholds ───────────────────────────────────────────────────────
+    uint256 public constant TIER2_THRESHOLD = 20 ether;
+    uint256 public constant TIER3_THRESHOLD = 100 ether;
+
+    // ── Tier 1 parameters (default / prototype) ───────────────────────────────
+    uint256 public constant TIER1_MIN_DEPOSIT   = 1 ether;
+    uint256 public constant TIER1_DISPUTE_STAKE = 0.5 ether;
+    uint256 public constant TIER1_JUROR_STAKE   = 0.1 ether;
+    uint256 public constant TIER1_PLATFORM_FEE  = 0.1 ether;
+
+    // ── Tier 2 parameters ─────────────────────────────────────────────────────
+    uint256 public constant TIER2_MIN_DEPOSIT   = 3 ether;
+    uint256 public constant TIER2_DISPUTE_STAKE = 1 ether;
+    uint256 public constant TIER2_JUROR_STAKE   = 0.2 ether;
+    uint256 public constant TIER2_PLATFORM_FEE  = 0.15 ether;
+
+    // ── Tier 3 parameters ─────────────────────────────────────────────────────
+    uint256 public constant TIER3_MIN_DEPOSIT   = 8 ether;
+    uint256 public constant TIER3_DISPUTE_STAKE = 3 ether;
+    uint256 public constant TIER3_JUROR_STAKE   = 0.6 ether;
+    uint256 public constant TIER3_PLATFORM_FEE  = 0.25 ether;
 
     uint256 private productCounter;
 
@@ -49,11 +73,11 @@ contract ProductMarket {
     mapping(address => uint256)   public  reviewerEarnings;
     uint256                       public  platformBalance;
 
-    event ProductListed  (uint256 indexed id, address indexed seller, string ipfsHash, uint256 price);
+    event ProductListed   (uint256 indexed id, address indexed seller, string ipfsHash, uint256 price, uint8 tier);
     event ProductPurchased(uint256 indexed id, address indexed buyer);
     event ProductShipped  (uint256 indexed id, string deliveryIpfsHash);
     event ProductCompleted(uint256 indexed id);
-    event ProductDisputed (uint256 indexed id, address raisedBy);
+    event ProductDisputed (uint256 indexed id, address raisedBy, uint8 tier);
     event ProductDelisted (uint256 indexed id);
     event Deposited       (address indexed user, uint256 amount);
     event Withdrawn       (address indexed user, uint256 amount);
@@ -78,6 +102,43 @@ contract ProductMarket {
     modifier onlyDisputeManager() {
         require(msg.sender == address(disputeManager), "Only dispute manager");
         _;
+    }
+
+    // ── Tier helpers ──────────────────────────────────────────────────────────
+
+    /// @notice Returns the tier (1, 2, or 3) for a given product price.
+    function getTier(uint256 price) public pure returns (uint8) {
+        if (price >= TIER3_THRESHOLD) return 3;
+        if (price >= TIER2_THRESHOLD) return 2;
+        return 1;
+    }
+
+    /// @notice Minimum security deposit required to list or buy at a given tier.
+    function minDeposit(uint8 tier) public pure returns (uint256) {
+        if (tier == 3) return TIER3_MIN_DEPOSIT;
+        if (tier == 2) return TIER2_MIN_DEPOSIT;
+        return TIER1_MIN_DEPOSIT;
+    }
+
+    /// @notice Dispute stake deducted from each party's deposit when a dispute is raised.
+    function disputeStake(uint8 tier) public pure returns (uint256) {
+        if (tier == 3) return TIER3_DISPUTE_STAKE;
+        if (tier == 2) return TIER2_DISPUTE_STAKE;
+        return TIER1_DISPUTE_STAKE;
+    }
+
+    /// @notice Juror stake required per case at a given tier.
+    function jurorStake(uint8 tier) public pure returns (uint256) {
+        if (tier == 3) return TIER3_JUROR_STAKE;
+        if (tier == 2) return TIER2_JUROR_STAKE;
+        return TIER1_JUROR_STAKE;
+    }
+
+    /// @notice Platform fee deducted from the prize pool at a given tier.
+    function platformFee(uint8 tier) public pure returns (uint256) {
+        if (tier == 3) return TIER3_PLATFORM_FEE;
+        if (tier == 2) return TIER2_PLATFORM_FEE;
+        return TIER1_PLATFORM_FEE;
     }
 
     // ── Security deposit ──────────────────────────────────────────────────────
@@ -138,8 +199,12 @@ contract ProductMarket {
     // ── Product lifecycle ─────────────────────────────────────────────────────
 
     function listProduct(string calldata ipfsHash, uint256 price) external returns (uint256) {
-        require(price > 0,                                          "Price must be greater than 0");
-        require(depositBalance[msg.sender] >= MIN_DEPOSIT,         "Insufficient deposit: need 1 ETH");
+        require(price > 0, "Price must be greater than 0");
+
+        uint8   tier = getTier(price);
+        uint256 minDep = minDeposit(tier);
+        require(depositBalance[msg.sender] >= minDep,
+            string(abi.encodePacked("Insufficient deposit for Tier ", _tierStr(tier))));
 
         productCounter++;
         products[productCounter] = Product({
@@ -153,15 +218,20 @@ contract ProductMarket {
             status:           ProductStatus.Listed
         });
 
-        emit ProductListed(productCounter, msg.sender, ipfsHash, price);
+        emit ProductListed(productCounter, msg.sender, ipfsHash, price, tier);
         return productCounter;
     }
 
     function purchaseProduct(uint256 productId) external {
         Product storage p = products[productId];
-        require(p.status == ProductStatus.Listed,         "Not available");
-        require(p.seller != msg.sender,                   "Seller cannot buy own product");
-        require(walletBalance[msg.sender] >= p.price,     "Insufficient wallet balance");
+        require(p.status == ProductStatus.Listed,     "Not available");
+        require(p.seller != msg.sender,               "Seller cannot buy own product");
+        require(walletBalance[msg.sender] >= p.price, "Insufficient wallet balance");
+
+        uint8   tier   = getTier(p.price);
+        uint256 minDep = minDeposit(tier);
+        require(depositBalance[msg.sender] >= minDep,
+            string(abi.encodePacked("Insufficient deposit for Tier ", _tierStr(tier))));
 
         walletBalance[msg.sender] -= p.price;
         p.buyer  = msg.sender;
@@ -172,8 +242,8 @@ contract ProductMarket {
 
     function confirmShipment(uint256 productId, string calldata deliveryIpfsHash) external {
         Product storage p = products[productId];
-        require(msg.sender == p.seller,           "Not the seller");
-        require(p.status == ProductStatus.Sold,   "Wrong status");
+        require(msg.sender == p.seller,         "Not the seller");
+        require(p.status == ProductStatus.Sold, "Wrong status");
 
         p.deliveryIpfsHash = deliveryIpfsHash;
         p.status           = ProductStatus.Shipped;
@@ -183,8 +253,8 @@ contract ProductMarket {
 
     function confirmReceipt(uint256 productId) external {
         Product storage p = products[productId];
-        require(msg.sender == p.buyer,              "Not the buyer");
-        require(p.status == ProductStatus.Shipped,  "Not shipped yet");
+        require(msg.sender == p.buyer,             "Not the buyer");
+        require(p.status == ProductStatus.Shipped, "Not shipped yet");
 
         p.status = ProductStatus.Completed;
         registry.recordSale(p.seller);
@@ -209,11 +279,17 @@ contract ProductMarket {
             p.status == ProductStatus.Sold || p.status == ProductStatus.Shipped,
             "Can only dispute after purchase"
         );
-        require(depositBalance[p.buyer]   >= DISPUTE_STAKE, "Buyer insufficient deposit");
-        require(depositBalance[p.seller]  >= DISPUTE_STAKE, "Seller insufficient deposit");
 
-        depositBalance[p.buyer]   -= DISPUTE_STAKE;
-        depositBalance[p.seller]  -= DISPUTE_STAKE;
+        uint8   tier  = getTier(p.price);
+        uint256 stake = disputeStake(tier);
+
+        require(depositBalance[p.buyer]  >= stake,
+            string(abi.encodePacked("Buyer insufficient deposit for Tier ", _tierStr(tier))));
+        require(depositBalance[p.seller] >= stake,
+            string(abi.encodePacked("Seller insufficient deposit for Tier ", _tierStr(tier))));
+
+        depositBalance[p.buyer]   -= stake;
+        depositBalance[p.seller]  -= stake;
         activeDisputeCount[p.buyer]++;
         activeDisputeCount[p.seller]++;
 
@@ -222,9 +298,10 @@ contract ProductMarket {
         partyDisputes[p.seller].push(productId);
 
         // ETH stays in this contract; notify DisputeManager to begin arbitration
-        disputeManager.openDispute(productId, p.buyer, p.seller, false);
+        // Pass the tier so DisputeManager uses the correct stake / fee constants
+        disputeManager.openDispute(productId, p.buyer, p.seller, false, tier);
 
-        emit ProductDisputed(productId, msg.sender);
+        emit ProductDisputed(productId, msg.sender, tier);
     }
 
     /// @dev Called by DisputeManager once voting is final.
@@ -265,6 +342,11 @@ contract ProductMarket {
 
     function getLatestProductId() external view returns (uint256) {
         return productCounter;
+    }
+
+    /// @notice Returns the tier for a product (convenience for frontend).
+    function getProductTier(uint256 productId) external view returns (uint8) {
+        return getTier(products[productId].price);
     }
 
     function getListedProducts() external view returns (uint256[] memory) {
@@ -308,6 +390,14 @@ contract ProductMarket {
 
     function getMyDisputes(address party) external view returns (uint256[] memory) {
         return partyDisputes[party];
+    }
+
+    // ── Internal helpers ──────────────────────────────────────────────────────
+
+    function _tierStr(uint8 tier) internal pure returns (string memory) {
+        if (tier == 3) return "3 (need 8 ETH deposit)";
+        if (tier == 2) return "2 (need 3 ETH deposit)";
+        return "1 (need 1 ETH deposit)";
     }
 
     receive() external payable {}

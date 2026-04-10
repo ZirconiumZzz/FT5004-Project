@@ -10,17 +10,23 @@ import "./ProductMarket.sol";
  *
  * Flow:
  *  1. ProductMarket calls openDispute() when a party raises a dispute.
+ *     The product's tier (1/2/3) is passed in so all stake/fee values scale correctly.
  *  2. Five arbitrators are randomly selected from ReviewerRegistry.
- *  3. Each selected arbitrator stakes 0.1 ETH (via ProductMarket.deductWalletForStake)
- *     and casts a vote (BuyerWins / SellerWins).
+ *  3. Each selected arbitrator stakes the tier-appropriate amount
+ *     (via ProductMarket.deductWalletForStake) and casts a vote (BuyerWins / SellerWins).
  *  4. The case auto-finalizes once three votes are cast (_finalizeDispute).
  *  5. After the 24-hour deadline, anyone may call settleDispute() to finalize
  *     or trigger a re-vote if the result is a tie.
  *
+ * Tier parameters (mirroring ProductMarket constants):
+ *  Tier 1: dispute stake 0.5 ETH, juror stake 0.1 ETH, platform fee 0.1 ETH
+ *  Tier 2: dispute stake 1.0 ETH, juror stake 0.2 ETH, platform fee 0.15 ETH
+ *  Tier 3: dispute stake 3.0 ETH, juror stake 0.6 ETH, platform fee 0.25 ETH
+ *
  * Prize pool distribution:
- *  - Losing party's 0.5 ETH dispute stake
+ *  - Losing party's dispute stake
  *  + Incorrect juror stakes
- *  - Platform fee (0.1 ETH)
+ *  - Platform fee
  *  = Reward shared equally among majority jurors (who also recover their own stake)
  *
  * All ETH remains in ProductMarket; this contract only issues accounting callbacks.
@@ -29,11 +35,21 @@ contract DisputeManager {
     ReviewerRegistry public registry;
     ProductMarket    public market;
 
-    uint256 public constant VOTING_PERIOD   = 1 days;
-    uint256 public constant REVIEWER_COUNT  = 5;
-    uint256 public constant REVIEWER_STAKE  = 0.1 ether;
-    uint256 public constant DISPUTE_STAKE   = 0.5 ether;
-    uint256 public constant PLATFORM_FEE    = 0.1 ether;
+    uint256 public constant VOTING_PERIOD  = 1 days;
+    uint256 public constant REVIEWER_COUNT = 5;
+
+    // ── Tier-specific constants (must match ProductMarket) ────────────────────
+    uint256 public constant TIER1_DISPUTE_STAKE = 0.5 ether;
+    uint256 public constant TIER1_JUROR_STAKE   = 0.1 ether;
+    uint256 public constant TIER1_PLATFORM_FEE  = 0.1 ether;
+
+    uint256 public constant TIER2_DISPUTE_STAKE = 1 ether;
+    uint256 public constant TIER2_JUROR_STAKE   = 0.2 ether;
+    uint256 public constant TIER2_PLATFORM_FEE  = 0.15 ether;
+
+    uint256 public constant TIER3_DISPUTE_STAKE = 3 ether;
+    uint256 public constant TIER3_JUROR_STAKE   = 0.6 ether;
+    uint256 public constant TIER3_PLATFORM_FEE  = 0.25 ether;
 
     enum Vote { None, BuyerWins, SellerWins }
 
@@ -47,6 +63,7 @@ contract DisputeManager {
         uint256   productId;
         address   buyer;
         address   seller;
+        uint8     tier;               // 1, 2, or 3 — determines stake/fee amounts
         address[] assignedReviewers;
         mapping(address => ReviewerInfo) reviewerInfo;
         uint256   buyerVotes;
@@ -60,33 +77,57 @@ contract DisputeManager {
     mapping(uint256 => Dispute)    private disputes;
     mapping(address => uint256[])  private reviewerDisputes;  // dispute IDs per arbitrator
 
-    event DisputeOpened  (uint256 indexed productId, address[] reviewers);
-    event ReviewerStaked (uint256 indexed productId, address indexed reviewer);
+    event DisputeOpened   (uint256 indexed productId, address[] reviewers, uint8 tier);
+    event ReviewerStaked  (uint256 indexed productId, address indexed reviewer);
     event ReviewerWithdrew(uint256 indexed productId, address indexed reviewer);
-    event VoteCast       (uint256 indexed productId, address indexed reviewer, Vote vote);
-    event DisputeResolved(uint256 indexed productId, bool buyerWon, uint256 buyerVotes, uint256 sellerVotes);
-    event TieDetected    (uint256 indexed productId);
+    event VoteCast        (uint256 indexed productId, address indexed reviewer, Vote vote);
+    event DisputeResolved (uint256 indexed productId, bool buyerWon, uint256 buyerVotes, uint256 sellerVotes);
+    event TieDetected     (uint256 indexed productId);
 
     constructor(address _registry, address _market) {
         registry = ReviewerRegistry(_registry);
         market   = ProductMarket(payable(_market));
     }
 
+    // ── Tier helpers ──────────────────────────────────────────────────────────
+
+    function _disputeStake(uint8 tier) internal pure returns (uint256) {
+        if (tier == 3) return TIER3_DISPUTE_STAKE;
+        if (tier == 2) return TIER2_DISPUTE_STAKE;
+        return TIER1_DISPUTE_STAKE;
+    }
+
+    function _jurorStake(uint8 tier) internal pure returns (uint256) {
+        if (tier == 3) return TIER3_JUROR_STAKE;
+        if (tier == 2) return TIER2_JUROR_STAKE;
+        return TIER1_JUROR_STAKE;
+    }
+
+    function _platformFee(uint8 tier) internal pure returns (uint256) {
+        if (tier == 3) return TIER3_PLATFORM_FEE;
+        if (tier == 2) return TIER2_PLATFORM_FEE;
+        return TIER1_PLATFORM_FEE;
+    }
+
     // ── Dispute initialization ────────────────────────────────────────────────
 
     /// @notice Called exclusively by ProductMarket when a dispute is raised.
+    /// @param tier  The tier determined by the product price (1, 2, or 3).
     function openDispute(
         uint256 productId,
         address buyer,
         address seller,
-        bool    /*aiUsageAllowed*/  // reserved for future AI-assisted evidence review
+        bool    /*aiUsageAllowed*/,  // reserved for future AI-assisted evidence review
+        uint8   tier
     ) external {
         require(msg.sender == address(market), "Only market contract");
+        require(tier >= 1 && tier <= 3, "Invalid tier");
 
         Dispute storage d = disputes[productId];
         d.productId = productId;
         d.buyer     = buyer;
         d.seller    = seller;
+        d.tier      = tier;
         d.deadline  = block.timestamp + VOTING_PERIOD;
 
         d.assignedReviewers = registry.selectReviewers(buyer, seller, REVIEWER_COUNT);
@@ -94,12 +135,12 @@ contract DisputeManager {
             reviewerDisputes[d.assignedReviewers[i]].push(productId);
         }
 
-        emit DisputeOpened(productId, d.assignedReviewers);
+        emit DisputeOpened(productId, d.assignedReviewers, tier);
     }
 
     // ── Juror staking ─────────────────────────────────────────────────────────
 
-    /// @notice Assigned arbitrators call this to commit their 0.1 ETH stake and enter the case.
+    /// @notice Assigned arbitrators call this to commit their tier-appropriate stake and enter the case.
     function stakeToEnter(uint256 productId) external {
         Dispute storage d = disputes[productId];
         require(!d.resolved,                          "Already resolved");
@@ -112,8 +153,10 @@ contract DisputeManager {
         require(isAssigned,                           "Not assigned to this dispute");
         require(!d.reviewerInfo[msg.sender].hasStaked,"Already staked");
 
+        uint256 stake = _jurorStake(d.tier);
+
         // Deduct from wallet; ETH remains in ProductMarket vault
-        market.deductWalletForStake(msg.sender, REVIEWER_STAKE);
+        market.deductWalletForStake(msg.sender, stake);
 
         d.reviewerInfo[msg.sender].hasStaked = true;
         d.stakedReviewerCount++;
@@ -132,7 +175,7 @@ contract DisputeManager {
         d.reviewerInfo[msg.sender].hasStaked = false;
         d.stakedReviewerCount--;
 
-        market.refundStake(msg.sender, REVIEWER_STAKE);
+        market.refundStake(msg.sender, _jurorStake(d.tier));
 
         emit ReviewerWithdrew(productId, msg.sender);
     }
@@ -164,61 +207,77 @@ contract DisputeManager {
 
     // ── Internal settlement ───────────────────────────────────────────────────
 
-    function _finalizeDispute(uint256 productId) internal {
-        Dispute storage d = disputes[productId];
-        if (d.resolved) return;
-
-        bool buyerWon     = d.buyerVotes > d.sellerVotes;
-        d.resolved        = true;
-        d.buyerWon        = buyerWon;
-        d.deadline        = block.timestamp;  // close the voting window
-
-        Vote winningVote  = buyerWon ? Vote.BuyerWins : Vote.SellerWins;
-
-        // Prize pool = losing party's dispute stake + incorrect juror stakes
-        uint256 prizePool         = DISPUTE_STAKE;
-        uint256 correctVoterCount = 0;
+    /// @dev Step 1: compute prize pool and reward per correct voter.
+    ///      Kept separate to avoid "stack too deep" in _finalizeDispute.
+    function _computePrizePool(uint256 productId, Vote winningVote)
+        internal view returns (uint256 rewardPerCorrectVoter, uint256 actualPlatformFee)
+    {
+        Dispute storage d       = disputes[productId];
+        uint256 jurorStake_     = _jurorStake(d.tier);
+        uint256 platFee         = _platformFee(d.tier);
+        uint256 prizePool       = _disputeStake(d.tier);
+        uint256 correctCount    = 0;
 
         for (uint i = 0; i < d.assignedReviewers.length; i++) {
-            address        r  = d.assignedReviewers[i];
-            ReviewerInfo storage ri = d.reviewerInfo[r];
+            ReviewerInfo storage ri = d.reviewerInfo[d.assignedReviewers[i]];
             if (ri.hasStaked && ri.hasVoted) {
-                if (ri.vote == winningVote) { correctVoterCount++; }
-                else                        { prizePool += REVIEWER_STAKE; }  // slashed stake enters pool
+                if (ri.vote == winningVote) { correctCount++; }
+                else                        { prizePool += jurorStake_; }
             }
         }
 
-        uint256 actualPlatformFee    = prizePool >= PLATFORM_FEE ? PLATFORM_FEE : prizePool;
-        uint256 remainingPrize       = prizePool - actualPlatformFee;
-        uint256 rewardPerCorrectVoter = correctVoterCount > 0
-            ? remainingPrize / correctVoterCount
-            : 0;
+        actualPlatformFee    = prizePool >= platFee ? platFee : prizePool;
+        uint256 remaining    = prizePool - actualPlatformFee;
+        rewardPerCorrectVoter = correctCount > 0 ? remaining / correctCount : 0;
+    }
 
-        // Settle all juror balances via accounting callbacks
+    /// @dev Step 2: pay out jurors. Separate function keeps _finalizeDispute stack shallow.
+    function _settleJurors(uint256 productId, Vote winningVote, uint256 rewardPerCorrectVoter) internal {
+        Dispute storage d   = disputes[productId];
+        uint256 jurorStake_ = _jurorStake(d.tier);
+
         for (uint i = 0; i < d.assignedReviewers.length; i++) {
-            address        r  = d.assignedReviewers[i];
+            address              r  = d.assignedReviewers[i];
             ReviewerInfo storage ri = d.reviewerInfo[r];
             if (!ri.hasStaked) continue;
 
             if (ri.hasVoted && ri.vote == winningVote) {
-                // Correct vote: recover stake + receive reward
-                market.rewardJuror(r, REVIEWER_STAKE, rewardPerCorrectVoter);
+                market.rewardJuror(r, jurorStake_, rewardPerCorrectVoter);
             } else if (!ri.hasVoted) {
-                // Abstained (timed out): stake returned, no reward
-                market.refundStake(r, REVIEWER_STAKE);
+                market.refundStake(r, jurorStake_);
             }
-            // Incorrect vote: stake is slashed (already counted in prizePool)
+            // Incorrect vote: stake slashed (already in prizePool)
 
             ri.hasStaked = false;
             ri.hasVoted  = false;
         }
+    }
+
+    function _finalizeDispute(uint256 productId) internal {
+        Dispute storage d = disputes[productId];
+        if (d.resolved) return;
+
+        bool buyerWon  = d.buyerVotes > d.sellerVotes;
+        d.resolved     = true;
+        d.buyerWon     = buyerWon;
+        d.deadline     = block.timestamp;
+
+        Vote winningVote = buyerWon ? Vote.BuyerWins : Vote.SellerWins;
+
+        (uint256 rewardPerCorrectVoter, uint256 actualPlatformFee) =
+            _computePrizePool(productId, winningVote);
+
+        _settleJurors(productId, winningVote, rewardPerCorrectVoter);
 
         market.creditPlatformFee(actualPlatformFee);
 
-        // Resolve the product: winner recovers their dispute stake, loser forfeits theirs
-        uint256 buyerStakeReturn  = buyerWon ? DISPUTE_STAKE : 0;
-        uint256 sellerStakeReturn = buyerWon ? 0             : DISPUTE_STAKE;
-        market.resolveByDispute(productId, buyerWon, buyerStakeReturn, sellerStakeReturn);
+        uint256 dispStake = _disputeStake(d.tier);
+        market.resolveByDispute(
+            productId,
+            buyerWon,
+            buyerWon ? dispStake : 0,
+            buyerWon ? 0         : dispStake
+        );
 
         emit DisputeResolved(productId, buyerWon, d.buyerVotes, d.sellerVotes);
     }
@@ -241,13 +300,14 @@ contract DisputeManager {
             d.buyerVotes   = 0;
             d.sellerVotes  = 0;
 
+            uint256 jurorStake_ = _jurorStake(d.tier);
             for (uint i = 0; i < d.assignedReviewers.length; i++) {
                 address        r  = d.assignedReviewers[i];
                 ReviewerInfo storage ri = d.reviewerInfo[r];
                 if (ri.hasStaked && !ri.hasVoted) {
                     ri.hasStaked = false;
                     d.stakedReviewerCount--;
-                    market.refundStake(r, REVIEWER_STAKE);
+                    market.refundStake(r, jurorStake_);
                 }
                 ri.hasVoted = false;
                 ri.vote     = Vote.None;
@@ -271,6 +331,8 @@ contract DisputeManager {
         uint256   productId;
         address   buyer;
         address   seller;
+        uint8     tier;
+        uint256   jurorStakeRequired;   // convenience: exact ETH juror must stake
         uint256   buyerVotes;
         uint256   sellerVotes;
         uint256   deadline;
@@ -283,6 +345,7 @@ contract DisputeManager {
 
     struct PartyDisputeView {
         uint256 productId;
+        uint8   tier;
         uint256 buyerVotes;
         uint256 sellerVotes;
         uint256 deadline;
@@ -300,17 +363,19 @@ contract DisputeManager {
             Dispute storage      d  = disputes[ids[i]];
             ReviewerInfo storage ri = d.reviewerInfo[reviewer];
             result[i] = DisputeView({
-                productId:   ids[i],
-                buyer:       d.buyer,
-                seller:      d.seller,
-                buyerVotes:  d.buyerVotes,
-                sellerVotes: d.sellerVotes,
-                deadline:    d.deadline,
-                resolved:    d.resolved,
-                buyerWon:    d.buyerWon,
-                myVote:      uint8(ri.vote),
-                myHasStaked: ri.hasStaked,
-                myHasVoted:  ri.hasVoted
+                productId:          ids[i],
+                buyer:              d.buyer,
+                seller:             d.seller,
+                tier:               d.tier,
+                jurorStakeRequired: _jurorStake(d.tier),
+                buyerVotes:         d.buyerVotes,
+                sellerVotes:        d.sellerVotes,
+                deadline:           d.deadline,
+                resolved:           d.resolved,
+                buyerWon:           d.buyerWon,
+                myVote:             uint8(ri.vote),
+                myHasStaked:        ri.hasStaked,
+                myHasVoted:         ri.hasVoted
             });
         }
         return result;
@@ -325,6 +390,7 @@ contract DisputeManager {
             Dispute storage d = disputes[productIds[i]];
             result[i] = PartyDisputeView({
                 productId:   productIds[i],
+                tier:        d.tier,
                 buyerVotes:  d.buyerVotes,
                 sellerVotes: d.sellerVotes,
                 deadline:    d.deadline,
@@ -349,10 +415,11 @@ contract DisputeManager {
         uint256          sellerVotes,
         uint256          deadline,
         bool             resolved,
-        bool             buyerWon
+        bool             buyerWon,
+        uint8            tier
     ) {
         Dispute storage d = disputes[productId];
-        return (d.assignedReviewers, d.buyerVotes, d.sellerVotes, d.deadline, d.resolved, d.buyerWon);
+        return (d.assignedReviewers, d.buyerVotes, d.sellerVotes, d.deadline, d.resolved, d.buyerWon, d.tier);
     }
 
     function getReviewerStakeStatus(uint256 productId, address reviewer)
@@ -366,6 +433,11 @@ contract DisputeManager {
         external view returns (Vote)
     {
         return disputes[productId].reviewerInfo[reviewer].vote;
+    }
+
+    /// @notice Convenience view: returns the juror stake required for a given dispute.
+    function getJurorStakeRequired(uint256 productId) external view returns (uint256) {
+        return _jurorStake(disputes[productId].tier);
     }
 
     receive() external payable {}

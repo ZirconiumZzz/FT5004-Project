@@ -7,9 +7,9 @@ import {
   ArrowRight, Lock, Gavel, Cpu
 } from 'lucide-react';
 
-import ProductMarketABI   from './abis/ProductMarket.json';
+import ProductMarketABI    from './abis/ProductMarket.json';
 import ReviewerRegistryABI from './abis/ReviewerRegistry.json';
-import DisputeManagerABI  from './abis/DisputeManager.json';
+import DisputeManagerABI   from './abis/DisputeManager.json';
 
 // ── Contract addresses (Hardhat localhost defaults) ───────────────────────────
 const ADDRESSES = {
@@ -26,6 +26,39 @@ const STATUS_MAP: Record<number, { label: string; color: string }> = {
   3: { label: "Completed",        color: "status-success" },
   4: { label: "In Dispute",       color: "status-dispute" },
   5: { label: "Closed",           color: "status-closed"  },
+};
+
+// ── Tier helpers ──────────────────────────────────────────────────────────────
+const TIER_LABELS: Record<number, string> = { 1: "Tier 1", 2: "Tier 2", 3: "Tier 3" };
+const TIER_COLORS: Record<number, string> = {
+  1: "status-active",
+  2: "status-shipped",
+  3: "status-dispute",
+};
+
+const TIER_JUROR_STAKE: Record<number, string> = {
+  1: "0.1",
+  2: "0.2",
+  3: "0.6",
+};
+
+const TIER_DISPUTE_STAKE: Record<number, string> = {
+  1: "0.5",
+  2: "1.0",
+  3: "3.0",
+};
+
+const TIER_MIN_DEPOSIT: Record<number, string> = {
+  1: "1",
+  2: "3",
+  3: "8",
+};
+
+/** Derive tier from price (in ETH, as bigint wei) — mirrors ProductMarket.getTier() */
+const getTierFromPrice = (priceWei: bigint): number => {
+  if (priceWei >= ethers.parseEther("100")) return 3;
+  if (priceWei >= ethers.parseEther("20"))  return 2;
+  return 1;
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -46,6 +79,7 @@ interface Product {
   meta: ComponentMeta;
   price: bigint;
   status: number;
+  tier: number;
   disputeResolved?: boolean;
   buyerWon?: boolean;
   iWon?: boolean;
@@ -53,7 +87,6 @@ interface Product {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// Parse the ipfsHash field, which stores component metadata as JSON
 const parseProductMeta = (raw: string): ComponentMeta => {
   try {
     const obj = JSON.parse(raw);
@@ -65,26 +98,34 @@ const parseProductMeta = (raw: string): ComponentMeta => {
 const formatProductTitle = (meta: ComponentMeta): string =>
   meta.partNumber ? `${meta.name} [${meta.partNumber}]` : meta.name;
 
-// Safely parse a raw contract product tuple into a typed Product object
 const safeParseProduct = (p: any): Product | null => {
   if (!p) return null;
   try {
     const id = (p.id ?? p[0])?.toString();
     if (!id) return null;
     const rawHash = (p.ipfsHash ?? p[3]) || "Unknown Component";
+    const price   = BigInt((p.price ?? p[5] ?? 0).toString());
     return {
       id,
       seller:   (p.seller ?? p[1]) || "",
       buyer:    (p.buyer  ?? p[2]) || "",
       ipfsHash: rawHash,
       meta:     parseProductMeta(rawHash),
-      price:    BigInt((p.price ?? p[5] ?? 0).toString()),
+      price,
       status:   Number(p.status ?? p[7] ?? 0),
+      tier:     getTierFromPrice(price),
     };
   } catch {
     return null;
   }
 };
+
+// ── TierBadge ─────────────────────────────────────────────────────────────────
+const TierBadge = ({ tier }: { tier: number }) => (
+  <span className={`status-badge ${TIER_COLORS[tier] || "status-active"}`}>
+    {TIER_LABELS[tier] || `Tier ${tier}`}
+  </span>
+);
 
 // ── ProductMetaGrid ───────────────────────────────────────────────────────────
 const ProductMetaGrid = ({ meta }: { meta: ComponentMeta }) => {
@@ -129,7 +170,9 @@ const WalletModal = ({ wallet, deposit, onWalletDeposit, onWalletWithdraw, onDep
           <div className="modal-balance-item">
             <span className="modal-balance-label">Security Deposit</span>
             <span className="modal-balance-value">{deposit} ETH</span>
-            <span className="modal-balance-desc">Requires &ge; 1 ETH to trade; 0.5 ETH held during disputes</span>
+            <span className="modal-balance-desc">
+              Tier 1 ≥ 1 ETH · Tier 2 ≥ 3 ETH · Tier 3 ≥ 8 ETH
+            </span>
           </div>
         </div>
 
@@ -156,7 +199,7 @@ const ARBITRATOR_TERMS = [
   "I confirm that I have professional experience in semiconductor components, electronic parts procurement, or a closely related industry.",
   "I will evaluate each dispute impartially, based solely on the evidence provided — including product specifications, part numbers, condition descriptions, and shipment documentation.",
   "I will not accept any form of bribe, side payment, or inducement from either the buyer or seller involved in a dispute.",
-  "I understand that incorrect or dishonest votes may result in forfeiture of my 0.1 ETH stake, as determined by the outcome of the majority vote.",
+  "I understand that incorrect or dishonest votes may result in forfeiture of my juror stake (0.1 / 0.2 / 0.6 ETH depending on case tier), as determined by the outcome of the majority vote.",
   "I acknowledge that I was selected randomly from the eligible arbitrator pool and that my identity is not disclosed to the disputing parties during the voting period.",
 ];
 
@@ -269,7 +312,7 @@ const Navbar = ({ account, deposit, wallet, connect, onDeposit, onWalletDeposit,
   );
 };
 
-// ── RoleSelectPage (Landing + Role Select) ────────────────────────────────────
+// ── RoleSelectPage ────────────────────────────────────────────────────────────
 const RoleSelectPage = ({ account, connect }: any) => {
   const navigate = useNavigate();
 
@@ -297,7 +340,7 @@ const RoleSelectPage = ({ account, connect }: any) => {
         <div className="landing-stats">
           <div className="stat-item"><span className="stat-num">100%</span><span className="stat-label">On-Chain Escrow</span></div>
           <div className="stat-divider" />
-          <div className="stat-item"><span className="stat-num">Expert</span><span className="stat-label">Industry Arbitrators</span></div>
+          <div className="stat-item"><span className="stat-num">3-Tier</span><span className="stat-label">Scaled Security</span></div>
           <div className="stat-divider" />
           <div className="stat-item"><span className="stat-num">Trustless</span><span className="stat-label">No Intermediaries</span></div>
         </div>
@@ -356,7 +399,10 @@ const BuyerMarket = ({ products, onBuy }: any) => {
                 <span className="product-id">#{p.id}</span>
               </div>
               <div className="product-info">
-                <h4 className="product-name">{formatProductTitle(p.meta)}</h4>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                  <h4 className="product-name" style={{ marginBottom: 0 }}>{formatProductTitle(p.meta)}</h4>
+                  <TierBadge tier={p.tier} />
+                </div>
                 <p className="product-seller">{p.seller.slice(0, 10)}···</p>
                 <ProductMetaGrid meta={p.meta} />
               </div>
@@ -375,6 +421,7 @@ const BuyerMarket = ({ products, onBuy }: any) => {
 // ── DisputeModal ──────────────────────────────────────────────────────────────
 const DisputeModal = ({ order, onSubmit, onClose }: any) => {
   const [reason, setReason] = useState("");
+  const stake = TIER_DISPUTE_STAKE[order.tier] || "0.5";
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box" onClick={e => e.stopPropagation()}>
@@ -397,6 +444,10 @@ const DisputeModal = ({ order, onSubmit, onClose }: any) => {
             <span className="modal-balance-label">Status</span>
             <span className={`status-badge ${STATUS_MAP[order.status]?.color}`}>{STATUS_MAP[order.status]?.label}</span>
           </div>
+          <div className="dispute-modal-row">
+            <span className="modal-balance-label">Case Tier</span>
+            <TierBadge tier={order.tier} />
+          </div>
         </div>
 
         <div className="modal-section">
@@ -409,7 +460,8 @@ const DisputeModal = ({ order, onSubmit, onClose }: any) => {
         </div>
 
         <div className="dispute-modal-warning">
-          &#9888;&#65039; Raising a dispute will deduct 0.5 ETH from each party's security deposit.
+          &#9888;&#65039; Raising a dispute will deduct <strong>{stake} ETH</strong> from each party's
+          security deposit ({TIER_LABELS[order.tier]} case).
           Arbitrators with semiconductor industry expertise will be randomly selected to review the case.
         </div>
 
@@ -448,6 +500,7 @@ const BuyerOrders = ({ orders, onConfirm, onDispute }: any) => {
                 <div>
                   <div className="order-meta">
                     <span className={`status-badge ${STATUS_MAP[o.status]?.color}`}>{STATUS_MAP[o.status]?.label}</span>
+                    <TierBadge tier={o.tier} />
                     <span className="order-id">#{o.id}</span>
                     {o.disputeResolved && (
                       <span className={`status-badge ${o.iWon ? 'status-success' : 'status-dispute'}`}>
@@ -460,8 +513,8 @@ const BuyerOrders = ({ orders, onConfirm, onDispute }: any) => {
                   {o.disputeResolved && (
                     <p className={`dispute-result-text ${o.iWon ? 'result-win' : 'result-lose'}`}>
                       {o.iWon
-                        ? `\u2713 Refund of ${ethers.formatEther(o.price)} ETH returned to your wallet`
-                        : `\u2717 Payment of ${ethers.formatEther(o.price)} ETH awarded to seller, 0.5 ETH security deposit forfeited`}
+                        ? `✓ Refund of ${ethers.formatEther(o.price)} ETH returned to your wallet`
+                        : `✗ Payment of ${ethers.formatEther(o.price)} ETH awarded to seller, ${TIER_DISPUTE_STAKE[o.tier]} ETH security deposit forfeited`}
                     </p>
                   )}
                 </div>
@@ -502,6 +555,9 @@ const SellerListings = ({ myProducts, onList, onShip, onDispute }: any) => {
   const [shipHash,   setShipHash]   = useState<Record<string, string>>({});
   const [disputeTarget, setDisputeTarget] = useState<any>(null);
 
+  // Derive tier for the deposit warning while the user is filling in the form
+  const previewTier = price ? getTierFromPrice(ethers.parseEther(parseFloat(price) > 0 ? price : "0")) : 1;
+
   const handleList = () => {
     const meta: ComponentMeta = {
       name,
@@ -526,7 +582,14 @@ const SellerListings = ({ myProducts, onList, onShip, onDispute }: any) => {
         <div className="form-card-header">
           <PlusCircle size={18} />
           <h3>List a Component</h3>
-          <span className="form-badge">Security Deposit Required: 1 ETH</span>
+          {price && parseFloat(price) > 0 && (
+            <span className="form-badge">
+              {TIER_LABELS[previewTier]} · Deposit ≥ {TIER_MIN_DEPOSIT[previewTier]} ETH required
+            </span>
+          )}
+          {(!price || parseFloat(price) <= 0) && (
+            <span className="form-badge">Security Deposit Required: 1 / 3 / 8 ETH by tier</span>
+          )}
         </div>
 
         <div className="form-row" style={{ marginBottom: '12px' }}>
@@ -601,6 +664,7 @@ const SellerListings = ({ myProducts, onList, onShip, onDispute }: any) => {
                 <div>
                   <div className="order-meta">
                     <span className={`status-badge ${STATUS_MAP[p.status]?.color}`}>{STATUS_MAP[p.status]?.label}</span>
+                    <TierBadge tier={p.tier} />
                     <span className="order-id">#{p.id}</span>
                     {p.disputeResolved && (
                       <span className={`status-badge ${p.iWon ? 'status-success' : 'status-dispute'}`}>
@@ -612,8 +676,8 @@ const SellerListings = ({ myProducts, onList, onShip, onDispute }: any) => {
                   {p.disputeResolved && (
                     <p className={`dispute-result-text ${p.iWon ? 'result-win' : 'result-lose'}`}>
                       {p.iWon
-                        ? `\u2713 Payment of ${ethers.formatEther(p.price)} ETH received in your wallet`
-                        : `\u2717 Payment of ${ethers.formatEther(p.price)} ETH refunded to buyer, 0.5 ETH security deposit forfeited`}
+                        ? `✓ Payment of ${ethers.formatEther(p.price)} ETH received in your wallet`
+                        : `✗ Payment of ${ethers.formatEther(p.price)} ETH refunded to buyer, ${TIER_DISPUTE_STAKE[p.tier]} ETH security deposit forfeited`}
                     </p>
                   )}
                 </div>
@@ -679,7 +743,7 @@ const ArbitratorPool = ({ disputes, isReviewer, onJoin, onVote, onForceRegister,
             <strong>Industry Experts Only</strong>
             <p>
               Arbitrators must have completed &ge; 10 verified transactions on DeTrust Market.
-              A stake of 0.1 ETH is required per case to ensure honest participation.
+              Juror stake scales with case tier: 0.1 ETH (Tier 1) · 0.2 ETH (Tier 2) · 0.6 ETH (Tier 3).
             </p>
           </div>
         </div>
@@ -696,6 +760,8 @@ const ArbitratorPool = ({ disputes, isReviewer, onJoin, onVote, onForceRegister,
             const meta        = parseProductMeta(d.ipfsHash || "");
             const totalVotes  = d.buyerVotes + d.sellerVotes;
             const votingClosed = d.resolved || totalVotes >= 3;
+            const tier        = d.tier || 1;
+            const jurorStakeLabel = TIER_JUROR_STAKE[tier] || "0.1";
 
             return (
               <div key={d.productId} className="dispute-card">
@@ -704,6 +770,7 @@ const ArbitratorPool = ({ disputes, isReviewer, onJoin, onVote, onForceRegister,
                 <div className="dispute-header">
                   <div className="dispute-meta">
                     <span className="dispute-id">Case #{d.productId.toString()}</span>
+                    <TierBadge tier={tier} />
                     <span className="vote-count">{totalVotes}/3 votes cast</span>
                     {d.resolved && (
                       <span className={`status-badge ${d.buyerWon ? 'status-success' : 'status-pending'}`}>
@@ -753,6 +820,10 @@ const ArbitratorPool = ({ disputes, isReviewer, onJoin, onVote, onForceRegister,
                     </div>
                   )}
                   <div className="dispute-info-item">
+                    <span className="dispute-info-label">Juror Stake</span>
+                    <span className="dispute-info-value">{jurorStakeLabel} ETH</span>
+                  </div>
+                  <div className="dispute-info-item">
                     <span className="dispute-info-label">Order Status</span>
                     <span className={`status-badge ${STATUS_MAP[d.status]?.color}`}>{STATUS_MAP[d.status]?.label}</span>
                   </div>
@@ -772,12 +843,14 @@ const ArbitratorPool = ({ disputes, isReviewer, onJoin, onVote, onForceRegister,
                       {d.jurorResult ? (
                         <div className={`juror-result-detail ${d.jurorResult.iWon ? 'result-win' : 'result-lose'}`}>
                           <span className="juror-result-verdict">
-                            {d.jurorResult.iWon ? '\u2713 Correct Vote' : '\u2717 Incorrect Vote'}
-                            {' \u00b7 '}
+                            {d.jurorResult.iWon ? '✓ Correct Vote' : '✗ Incorrect Vote'}
+                            {' · '}
                             {d.jurorResult.buyerWon ? 'Buyer Prevailed' : 'Seller Prevailed'}
                           </span>
                           <span className="juror-result-amount">
-                            {d.jurorResult.iWon ? '+0.1 ETH stake returned + reward' : '-0.1 ETH stake forfeited'}
+                            {d.jurorResult.iWon
+                              ? `+${jurorStakeLabel} ETH stake returned + reward`
+                              : `-${jurorStakeLabel} ETH stake forfeited`}
                           </span>
                         </div>
                       ) : (
@@ -787,7 +860,7 @@ const ArbitratorPool = ({ disputes, isReviewer, onJoin, onVote, onForceRegister,
                   ) : !d.isStaked ? (
                     !votingClosed ? (
                       <button className="btn-primary btn-sm" onClick={() => onJoin(d.productId)} disabled={!isReviewer}>
-                        <Lock size={14} /> Stake 0.1 ETH to Join
+                        <Lock size={14} /> Stake {jurorStakeLabel} ETH to Join
                       </button>
                     ) : (
                       <span className="text-muted">Voting has ended</span>
@@ -797,12 +870,12 @@ const ArbitratorPool = ({ disputes, isReviewer, onJoin, onVote, onForceRegister,
                       <button className="btn-primary btn-sm" onClick={() => onVote(d.productId, 1)}>Side with Buyer</button>
                       <button className="btn-outline btn-sm" onClick={() => onVote(d.productId, 2)}>Side with Seller</button>
                       <button className="btn-ghost btn-sm" onClick={() => onWithdrawStake(d.productId)}
-                        title="Exit arbitration and reclaim your 0.1 ETH stake">
+                        title="Exit arbitration and reclaim your stake">
                         Exit Case
                       </button>
                     </>
                   ) : d.hasVoted ? (
-                    <span className="text-success">✓ Vote submitted &mdash; awaiting other arbitrators</span>
+                    <span className="text-success">✓ Vote submitted — awaiting other arbitrators</span>
                   ) : (
                     <span className="text-muted">Voting has ended</span>
                   )}
@@ -829,7 +902,6 @@ export default function App() {
     deposit: "0", wallet: "0", isReviewer: false,
   });
 
-  // Request a new account selection on every click (allows switching accounts)
   const connectWallet = async () => {
     if (!window.ethereum) return alert("Please install the MetaMask extension");
     try {
@@ -839,12 +911,10 @@ export default function App() {
     } catch {}
   };
 
-  // Helper: return a signer-bound contract instance
-  const getSigner = () => new ethers.BrowserProvider(window.ethereum).getSigner();
-  const getMarket  = async () => new ethers.Contract(ADDRESSES.MARKET,   ProductMarketABI.abi,    await getSigner());
-  const getDispute = async () => new ethers.Contract(ADDRESSES.DISPUTE,  DisputeManagerABI.abi,   await getSigner());
+  const getSigner  = () => new ethers.BrowserProvider(window.ethereum).getSigner();
+  const getMarket  = async () => new ethers.Contract(ADDRESSES.MARKET,  ProductMarketABI.abi,    await getSigner());
+  const getDispute = async () => new ethers.Contract(ADDRESSES.DISPUTE, DisputeManagerABI.abi,   await getSigner());
 
-  // Load all on-chain state for the connected account
   const loadData = useCallback(async () => {
     if (!window.ethereum || !account) return;
     try {
@@ -858,18 +928,17 @@ export default function App() {
         market.getLatestProductId().catch(() => 0n),
       ]);
 
-      // Fetch every product by sequential ID
       const allIds = Array.from({ length: Number(latestId) }, (_, i) => String(i + 1));
       const fetched = await Promise.all(
         allIds.map(id => market.products(id).then(safeParseProduct).catch(() => null))
       );
       const validProducts = fetched.filter((p): p is Product => p !== null && p.id !== "0");
 
-      // For closed (Resolved) products, attach dispute outcome so the UI can display win/loss
       const enrichWithDisputeResult = async (products: Product[]) =>
         Promise.all(products.map(async p => {
           if (p.status !== 5) return p;
           try {
+            // getDisputeInfo now returns 7 values (added tier at the end)
             const [,,,, resolved, buyerWon] = await dispute.getDisputeInfo(p.id);
             if (resolved) {
               const isBuyer = p.buyer.toLowerCase() === account.toLowerCase();
@@ -886,13 +955,14 @@ export default function App() {
         enrichWithDisputeResult(myOrdersRaw),
       ]);
 
-      // Arbitrators: load their assigned dispute cases
       let activeDisputes: any[] = [];
       if (revStatus) {
         const disputeIds: any[] = await dispute.getDisputesByReviewer(account).catch(() => []);
         activeDisputes = (await Promise.all(disputeIds.map(async (id: any) => {
           try {
-            const [, buyerVotes, sellerVotes,, resolved, buyerWon] = await dispute.getDisputeInfo(id);
+            // getDisputeInfo returns: assignedReviewers, buyerVotes, sellerVotes, deadline, resolved, buyerWon, tier
+            const [, buyerVotes, sellerVotes,, resolved, buyerWon, tier] =
+              await dispute.getDisputeInfo(id);
             const [hasStaked, hasVoted] = await dispute.getReviewerStakeStatus(id, account).catch(() => [false, false]);
             const myVote = Number(await dispute.getReviewerVote(id, account).catch(() => 0));
             const p = await market.getProduct(id).catch(() => null);
@@ -902,15 +972,16 @@ export default function App() {
               : null;
 
             return {
-              productId: id,
-              buyerVotes:    Number(buyerVotes),
-              sellerVotes:   Number(sellerVotes),
-              resolved,      buyerWon,
-              isStaked:      hasStaked,
-              hasVoted,      myVote,
+              productId:    id,
+              tier:         Number(tier ?? 1),
+              buyerVotes:   Number(buyerVotes),
+              sellerVotes:  Number(sellerVotes),
+              resolved,     buyerWon,
+              isStaked:     hasStaked,
+              hasVoted,     myVote,
               jurorResult,
-              ipfsHash:      p?.ipfsHash || "",
-              status:        p ? Number(p.status) : 4,
+              ipfsHash:     p?.ipfsHash || "",
+              status:       p ? Number(p.status) : 4,
               disputeReason: disputeReasons[id.toString()] || "",
             };
           } catch { return null; }
@@ -958,12 +1029,12 @@ export default function App() {
 
   const handleList = async (metaJson: string, p: string) => {
     try { await (await (await getMarket()).listProduct(metaJson, ethers.parseEther(p))).wait(); loadData(); }
-    catch (e: any) { alert(e.reason || "Listing failed — ensure your security deposit is sufficient"); }
+    catch (e: any) { alert(e.reason || "Listing failed — ensure your security deposit meets the tier requirement"); }
   };
 
   const handleBuy = async (id: any) => {
     try { await (await (await getMarket()).purchaseProduct(id)).wait(); loadData(); }
-    catch (e: any) { alert(e.reason || "Purchase failed — check your wallet balance"); }
+    catch (e: any) { alert(e.reason || "Purchase failed — check your wallet balance and security deposit"); }
   };
 
   const handleShip = async (id: any, hash: string) => {
@@ -981,12 +1052,14 @@ export default function App() {
       await (await (await getMarket()).raiseDispute(id)).wait();
       if (reason) setDisputeReasons(prev => ({ ...prev, [id.toString()]: reason }));
       loadData();
-    } catch (e: any) { alert(`Dispute failed: ${e.reason || "Check that both parties have sufficient security deposits"}`); }
+    } catch (e: any) {
+      alert(`Dispute failed: ${e.reason || "Check that both parties have sufficient security deposit for the case tier"}`);
+    }
   };
 
   const handleJoinDispute = async (productId: string) => {
     try { await (await (await getDispute()).stakeToEnter(BigInt(productId))).wait(); loadData(); }
-    catch (e: any) { alert("Failed to join: " + (e.reason || "You may not be assigned to this case or have insufficient balance")); }
+    catch (e: any) { alert("Failed to join: " + (e.reason || "You may not be assigned to this case or have insufficient wallet balance")); }
   };
 
   const handleVote = async (productId: string, choice: number) => {
